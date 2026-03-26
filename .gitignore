@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment
+.env
+.envrc
+
+# macOS
+.DS_Store
+
+# Build
+/build/
+dist/
+*.egg-info/
+
+# Raw datasets (large binary files — re-download via torchvision)
+data/MNIST/
+data/FashionMNIST/
