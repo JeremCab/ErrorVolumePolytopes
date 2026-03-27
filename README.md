@@ -17,5 +17,5 @@ python -m src.models.train --model mlp --epochs 3
 ## Run experiments
 
 ```bash
-python -m scripts.run_experiment scripts/config.yaml
+sbatch slurms/<slurm_name>.slurm
 ```
