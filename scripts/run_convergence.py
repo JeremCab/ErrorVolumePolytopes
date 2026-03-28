@@ -168,6 +168,18 @@ def run_convergence(A_correct, b_correct, bounds, n_replications, n_workers):
 
 
 # ---------------------------------------------------------------------------
+# CPU detection (Jean Zay vs laptop)
+# ---------------------------------------------------------------------------
+
+def _default_n_workers() -> int:
+    """Use SLURM_CPUS_PER_TASK on Jean Zay, fallback to local cpu_count."""
+    slurm = os.environ.get("SLURM_CPUS_PER_TASK")
+    if slurm is not None:
+        return int(slurm)
+    return min(len(N_DIRECTIONS_GRID), os.cpu_count() or 1)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -185,8 +197,9 @@ def main():
                         help="Quantization bits for qmodel (needed to build A_correct).")
     parser.add_argument("--n_replications", type=int, default=20)
     parser.add_argument("--n_workers",      type=int,
-                        default=min(len(N_DIRECTIONS_GRID), os.cpu_count() or 1),
-                        help="Number of parallel workers (default: min(N_grid size, CPU count)).")
+                        default=_default_n_workers(),
+                        help="Number of parallel workers. Defaults to SLURM_CPUS_PER_TASK "
+                             "if set (Jean Zay), otherwise min(N_grid size, cpu_count) locally.")
     parser.add_argument("--output_dir",     type=str, default="results")
     args = parser.parse_args()
 
