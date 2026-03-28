@@ -4,28 +4,32 @@ run_convergence.py
 Tests convergence of the mean-width estimator for the correct polytope
 as the number of random directions grows.
 
-For each N in a fixed grid, runs R independent replications of
-estimate_polytope_width (non-paired) and saves raw results to a JSON file
-for later plotting in notebooks/test_convergence.ipynb.
+All (N, replication) pairs are submitted as independent tasks to a
+ProcessPoolExecutor, so the full experiment runs in ~1.5h on 10 cores
+instead of ~10h sequentially.
 
 Usage (from project root):
     python scripts/run_convergence.py \
-        --sample_idx 0 \
+        --sample_idx 42 \
         --model_path checkpoints/fashion_mlp_best.pth \
         --data_path  data/fashionMNIST_correct_mlp.pt \
         --bits 4 \
         --n_replications 20 \
+        --n_workers 10 \
         --output_dir results
 """
 
 import argparse
 import json
 import logging
+import os
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
 # Ensure project root is on sys.path when running as a script
+# (also executed in worker processes on spawn, which is correct)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
@@ -40,8 +44,36 @@ from src.quantization.quantize import quantize_model
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
-# N_DIRECTIONS_GRID = [10, 20, 30, 50, 75, 100, 150, 200]
-N_DIRECTIONS_GRID = [3, 5, 10]
+N_DIRECTIONS_GRID = [10, 20, 30, 50, 75, 100, 150, 200]
+
+
+# ---------------------------------------------------------------------------
+# Worker state — initialised once per worker process via _init_worker.
+# Using an initializer avoids pickling A_np / b_np for every task (160×).
+# Instead they are pickled only once per worker (n_workers×).
+# ---------------------------------------------------------------------------
+
+_WORKER_A      = None
+_WORKER_B      = None
+_WORKER_BOUNDS = None
+
+
+def _init_worker(A_np, b_np, bounds):
+    global _WORKER_A, _WORKER_B, _WORKER_BOUNDS
+    _WORKER_A      = A_np
+    _WORKER_B      = b_np
+    _WORKER_BOUNDS = bounds
+
+
+def _run_single_task(N: int):
+    """One task = one call to estimate_polytope_width for a given N.
+    Returns (N, mean_width) so results can be grouped by N afterwards.
+    """
+    out = estimate_polytope_width(
+        _WORKER_A, _WORKER_B, _WORKER_BOUNDS,
+        n_directions=N,
+    )
+    return N, out["mean_width_correct"]
 
 
 # ---------------------------------------------------------------------------
@@ -78,45 +110,61 @@ def build_correct_polytope(model, qmodel, x, c):
 # Convergence experiment
 # ---------------------------------------------------------------------------
 
-def run_convergence(A_correct, b_correct, bounds, n_replications):
+def run_convergence(A_correct, b_correct, bounds, n_replications, n_workers):
     """
-    For each N in N_DIRECTIONS_GRID, run n_replications independent
-    estimates of the mean width of A_correct.
+    Submit all (N, replication) pairs as independent tasks to a
+    ProcessPoolExecutor. Workers share A_correct / b_correct via
+    an initializer (one pickle per worker, not per task).
 
     Returns
     -------
-    dict: {N (int) -> {"widths": list, "mean": float, "std": float, "elapsed_s": float}}
+    dict: {N (int) -> {"widths": list, "mean": float, "std": float}}
     """
+
+    # Convert to numpy once in the main process
+    if hasattr(A_correct, "detach"):
+        A_np = A_correct.detach().cpu().numpy()
+        b_np = b_correct.detach().cpu().numpy()
+    else:
+        A_np = np.asarray(A_correct)
+        b_np = np.asarray(b_correct)
+
+    # Flat task list: one entry per (N, replication) pair
+    tasks = [N for N in N_DIRECTIONS_GRID for _ in range(n_replications)]
+    n_tasks = len(tasks)
+    log.info(f"Total tasks  : {n_tasks}  ({len(N_DIRECTIONS_GRID)} N values × {n_replications} replications)")
+    log.info(f"Workers      : {n_workers}")
+
+    raw = {N: [] for N in N_DIRECTIONS_GRID}
+
+    t0 = time.perf_counter()
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_init_worker,
+        initargs=(A_np, b_np, bounds),
+    ) as executor:
+        for N, width in tqdm(
+            executor.map(_run_single_task, tasks),
+            total=n_tasks,
+            desc="Tasks completed",
+        ):
+            raw[N].append(width)
+
+    elapsed_total = time.perf_counter() - t0
+    log.info(f"Total elapsed: {elapsed_total:.1f}s")
+
+    # Aggregate per N
     results = {}
-
     for N in N_DIRECTIONS_GRID:
-        log.info(f"  N={N:4d} | {n_replications} replications...")
-        t0 = time.perf_counter()
-
-        widths = []
-        for _ in tqdm(range(n_replications), desc=f"    N={N}", leave=False):
-            out = estimate_polytope_width(
-                A_correct, b_correct, bounds,
-                n_directions=N,
-            )
-            widths.append(out["mean_width_correct"])
-
-        elapsed = time.perf_counter() - t0
-        widths_arr = np.array(widths)
-
+        arr = np.array(raw[N])
         results[N] = {
-            "widths":    widths_arr.tolist(),
-            "mean":      float(widths_arr.mean()),
-            "std":       float(widths_arr.std()),
-            "elapsed_s": round(elapsed, 2),
+            "widths": arr.tolist(),
+            "mean":   float(arr.mean()),
+            "std":    float(arr.std()),
         }
-        log.info(
-            f"         mean={results[N]['mean']:.4f}  "
-            f"std={results[N]['std']:.4f}  "
-            f"({elapsed:.1f}s)"
-        )
+        log.info(f"  N={N:4d}  mean={results[N]['mean']:.4f}  std={results[N]['std']:.4f}")
 
-    return results
+    return results, round(elapsed_total, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +184,9 @@ def main():
     parser.add_argument("--bits",           type=int, default=4,
                         help="Quantization bits for qmodel (needed to build A_correct).")
     parser.add_argument("--n_replications", type=int, default=20)
+    parser.add_argument("--n_workers",      type=int,
+                        default=min(len(N_DIRECTIONS_GRID), os.cpu_count() or 1),
+                        help="Number of parallel workers (default: min(N_grid size, CPU count)).")
     parser.add_argument("--output_dir",     type=str, default="results")
     args = parser.parse_args()
 
@@ -172,17 +223,19 @@ def main():
 
     # --- Run experiment ---
     log.info(f"\nRunning convergence experiment...")
-    results = run_convergence(A_correct, b_correct, bounds, args.n_replications)
+    results, elapsed_total = run_convergence(
+        A_correct, b_correct, bounds, args.n_replications, args.n_workers
+    )
 
-    # --- Save ---
-    # Note: integer keys are serialised as strings in JSON; the notebook
-    # reads them back with int(k).
+    # --- Save (same format as before — notebook works unchanged) ---
     output = {
         "model_path":        args.model_path,
         "data_path":         args.data_path,
         "sample_idx":        args.sample_idx,
         "bits":              args.bits,
         "n_replications":    args.n_replications,
+        "n_workers":         args.n_workers,
+        "elapsed_total_s":   elapsed_total,
         "n_directions_grid": N_DIRECTIONS_GRID,
         "results":           {str(k): v for k, v in results.items()},
     }
