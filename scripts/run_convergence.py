@@ -83,7 +83,7 @@ def _run_single_task(N: int):
 def load_model(model_path: str) -> FashionMLP_Large:
     model = FashionMLP_Large()
     # Checkpoint is a plain state_dict (no wrapper key)
-    state_dict = torch.load(model_path, weights_only=True)
+    state_dict = torch.load(model_path, weights_only=True, map_location="cpu")
     model.load_state_dict(state_dict)
     model.eval()
     return model
