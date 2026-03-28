@@ -17,6 +17,8 @@ python -m src.models.train --model mlp --epochs 3
 
 ## Run convergence experiment
 
+### On laptop or PC
+
 From project root, run
 ```bash
     python scripts/run_convergence.py \
@@ -29,6 +31,15 @@ From project root, run
         --output_dir results
 ```
 Then open notebooks/test_convergence.ipynb, set RESULTS_PATH to match your run, and execute the cells.
+
+### On supercomputer
+
+Submit job with:
+```bash
+  cd $WORK/ErrorVolumePolytopes
+  mkdir -p logs
+  sbatch slurms/run_convergence.slurm
+```bash
 
 
 ## Run experiments
