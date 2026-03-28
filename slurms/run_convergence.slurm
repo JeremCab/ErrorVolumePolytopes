@@ -2,12 +2,11 @@
 #SBATCH --job-name=convergence
 #SBATCH --hint=nomultithread
 #SBATCH --account=aik@cpu
-#SBATCH --constraint=cpu
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=40
 #SBATCH --array=0-49          # one task per sample — adjust range as needed
-#SBATCH --time=01:00:00
+#SBATCH --time=04:00:00
 #SBATCH --output=logs/convergence_%A_%a.out
 #SBATCH --error=logs/convergence_%A_%a.err
 
