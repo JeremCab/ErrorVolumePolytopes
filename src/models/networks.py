@@ -6,16 +6,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SmallMLP(nn.Module):
-    """Simple 2-layer MLP for flattened MNIST."""
-    def __init__(self, input_dim=28*28, num_classes=10):
+    """3-layer MLP for flattened MNIST (784 → 64 → 32 → 10)."""
+    def __init__(self, input_dim=28*28):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
             nn.ReLU(),
-            # nn.Dropout(0.8),
             nn.Linear(64, 32),
             nn.ReLU(),
-            # nn.Dropout(0.8),
             nn.Linear(32, 10)
         )
 
@@ -25,23 +23,21 @@ class SmallMLP(nn.Module):
 
 
 class MLP(nn.Module):
-    """Simple 2-layer MLP for flattened MNIST."""
-    def __init__(self, input_dim=28*28, num_classes=10):
+    """3-layer MLP for flattened MNIST (784 → 2000 → 1000 → 10)."""
+    def __init__(self, input_dim=28*28):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_dim, 2000),
             nn.ReLU(),
-            # nn.Dropout(0.8),
             nn.Linear(2000, 1000),
             nn.ReLU(),
-            # nn.Dropout(0.8),
             nn.Linear(1000, 10)
         )
 
     def forward(self, x):
         x = x.view(x.size(0), -1)
         return self.net(x)
-    
+
 
 class SmallCNN(nn.Module):
     """Tiny CNN for MNIST-style images."""
@@ -74,6 +70,7 @@ class SmallCNN(nn.Module):
 
 
 class FashionMLP_Large(nn.Module):
+    """5-layer MLP for Fashion-MNIST (784 → 1024 → 512 → 256 → 128 → 10)."""
     def __init__(self):
         super().__init__()
         self.layers = nn.Sequential(
@@ -99,6 +96,7 @@ class FashionMLP_Large(nn.Module):
     
 
 class FashionCNN_Small(nn.Module):
+    """Small CNN for Fashion-MNIST: two conv blocks followed by two FC layers."""
     def __init__(self):
         super().__init__()
 

@@ -8,36 +8,56 @@ from scipy.optimize import linprog
 
 def prune_constraints_Clarkson(A, b, bounds=None, indices_to_check=None, tol=1e-8, verbose=False):
     """
-    Supprime les contraintes redondantes d'un polytope Ax + b <= 0 
-    de manière séquentielle (Exact).
+    Remove redundant constraints from a polytope Ax + b <= 0 (exact, sequential).
+
+    A constraint i is redundant if the maximum of a_i^T x + b_i over the
+    remaining active constraints is <= 0, meaning it is always satisfied.
+
+    Parameters
+    ----------
+    A : (n, d) array or torch.Tensor
+    b : (n,) array or torch.Tensor
+    bounds : list of (lo, hi) pairs or None
+        Variable bounds passed to linprog.
+    indices_to_check : list of int or None
+        Subset of constraint indices to test. If None, all constraints are tested.
+    tol : float
+        Tolerance for redundancy check.
+    verbose : bool
+
+    Returns
+    -------
+    A_pruned : np.ndarray
+    b_pruned : np.ndarray
+    ratio_removed : float
+        Fraction of constraints removed.
     """
     if hasattr(A, "detach"):
         A, b = A.detach().cpu().numpy(), b.detach().cpu().numpy()
 
     n_constraints, d = A.shape
-    
-    # Sécurité sur les bounds
+
+    # Normalise bounds to list-of-pairs format
     if isinstance(bounds, tuple) and len(bounds) == 2 and not isinstance(bounds[0], tuple):
         bounds = [bounds] * d
     elif bounds is None:
         bounds = [(None, None)] * d
-    
-    # Si on ne donne pas d'indices, on teste TOUT
+
+    # Default: test all constraints
     if indices_to_check is None:
         indices_to_check = list(range(n_constraints))
-    
+
     active_indices = list(range(n_constraints))
     removed_indices = []
 
     for idx_to_test in indices_to_check:
-        # On ne teste que si elle est encore dans le set actif 
-        # (important si indices_to_check contient des doublons)
+        # Skip if already removed (guards against duplicates in indices_to_check)
         if idx_to_test not in active_indices:
             continue
 
         others = [j for j in active_indices if j != idx_to_test]
-        
-        # Maximiser a_i * x + b_i
+
+        # Maximise a_i^T x + b_i subject to remaining constraints
         res = linprog(
             c=-A[idx_to_test],
             A_ub=A[others],
@@ -50,12 +70,12 @@ def prune_constraints_Clarkson(A, b, bounds=None, indices_to_check=None, tol=1e-
             active_indices.remove(idx_to_test)
             removed_indices.append(idx_to_test)
             if verbose:
-                print(f"  → Constraint {idx_to_test} is redundant.")
+                print(f"  Constraint {idx_to_test} is redundant.")
 
     A_pruned = A[active_indices]
     b_pruned = b[active_indices]
     ratio_removed = len(removed_indices) / n_constraints
-    
+
     return A_pruned, b_pruned, ratio_removed
 
 
@@ -176,7 +196,10 @@ def prune_constraints_RayTracing(
 
     Returns
     -------
-    A_pruned, b_pruned
+    A_pruned : np.ndarray
+    b_pruned : np.ndarray
+    ratio_removed : float
+        Fraction of constraints removed (inherited from Clarkson step).
     """
 
     # ---------------- #

@@ -5,8 +5,6 @@
 
 import torch
 import torch.nn as nn
-from collections import OrderedDict
-from typing import OrderedDict as OD
 
 
 # ================ #
@@ -46,12 +44,10 @@ def get_unsaturations(model, x, return_all=False):
     Compute the (un)saturation pattern of a feedforward ReLU network.
 
     This function performs a forward pass and extracts the unsaturation
-    masks whic is a list of lists of boolean tensors.
-    For each layer, the mask indicates which neurons are unsaturated (pre-activation z >= 0).
-    The final layer is treated as always unsaturated (mask of all True).
-    indicating neurons whose preactivation satisfy z >= 0 .
-    Optionally, it also returns the corresponding 
-    pre-activations and post-activations for debugging.
+    masks: a list of boolean tensors, one per layer. Each mask indicates
+    which neurons are unsaturated (pre-activation z >= 0). The final layer
+    is treated as always unsaturated (mask of all True). Optionally, it also
+    returns the corresponding pre-activations and post-activations for debugging.
 
     Parameters
     ----------

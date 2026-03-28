@@ -1,5 +1,3 @@
-from tqdm import tqdm
-
 import numpy as np
 
 import torch
@@ -16,9 +14,29 @@ from src.shortcuts.shortcut_weights import pack_shortcut_weights
 
 def build_base_polytope_from_shortcuts(W_l, B_l, m_l):
     """
-    Build base polytope from precomputed shortcut weights.
-    (single model)
-    TODO explain that A, b represent constraints A @ x + b ≤ 0 (and not A @ x ≤ b)
+    Build the base (activation) polytope from precomputed shortcut weights.
+
+    For each hidden neuron i, the activation constraint is:
+        - if unsaturated (m_l[i] = True):  -(W_i x + b_i) <= 0  i.e. z_i >= 0
+        - if saturated   (m_l[i] = False):  (W_i x + b_i) <= 0  i.e. z_i <= 0
+
+    The output layer is excluded (its constraints come from classification).
+
+    Convention throughout this codebase: Ax + b <= 0 (NOT Ax <= b).
+
+    Parameters
+    ----------
+    W_l : list of torch.Tensor
+        Shortcut weight matrices, one per layer.
+    B_l : list of torch.Tensor
+        Shortcut bias vectors, one per layer.
+    m_l : list of torch.Tensor (bool)
+        Unsaturation masks, one per layer (True = unsaturated).
+
+    Returns
+    -------
+    A : torch.Tensor of shape (n_constraints, input_dim)
+    b : torch.Tensor of shape (n_constraints,)
     """
 
     packed_matrix, packed_mask = pack_shortcut_weights(W_l, B_l, m_l)
@@ -184,6 +202,29 @@ def check_polytope_membership(A, b, x, tol=1e-5):
 
 
 def evaluate_polytopes(model, qmodel, dataset, indices):
+    """
+    Evaluate polytope membership for a set of samples.
+
+    For each sample where model is correct, builds the correct and both
+    polytopes and checks whether the sample lies inside each one.
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+    qmodel : torch.nn.Module
+    dataset : torch.utils.data.Dataset
+    indices : list of int
+        Indices into dataset to evaluate.
+
+    Returns
+    -------
+    dict with keys:
+        "total"             : samples where model is correct
+        "model_correct"     : same as total
+        "qmodel_correct"    : samples where qmodel is also correct
+        "correct_polytope_ok" : samples inside correct_polytope
+        "both_polytope_ok"    : samples inside both_polytope
+    """
 
     device = next(model.parameters()).device
 
@@ -243,7 +284,6 @@ if __name__ == "__main__":
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
     import torch
-    from torch.utils.data import Subset
 
     from data.mnist_data import load_mnist_datasets
     from src.models.networks import SmallMLP

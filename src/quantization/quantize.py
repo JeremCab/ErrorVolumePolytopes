@@ -2,8 +2,9 @@
 
 Provides functions to quantize tensors and PyTorch models to a given number of bits.
 """
+import copy
+
 import torch
-import math
 
 
 def quantize_tensor(tensor: torch.Tensor, bits: int) -> torch.Tensor:
@@ -25,9 +26,6 @@ def quantize_model(model: torch.nn.Module, bits: int) -> torch.nn.Module:
 
     This performs weight rounding (post-training quantization).
     """
-    qmodel = type(model)() if hasattr(type(model), '__call__') else None
-    # Safer approach: create deep copy and quantize in-place
-    import copy
     qmodel = copy.deepcopy(model)
     for p in qmodel.parameters():
         with torch.no_grad():
