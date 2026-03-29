@@ -5,8 +5,9 @@ Tests convergence of the mean-width estimator for the correct polytope
 as the number of random directions grows.
 
 All (N, replication) pairs are submitted as independent tasks to a
-ProcessPoolExecutor, so the full experiment runs in ~1.5h on 10 cores
-instead of ~10h sequentially.
+ProcessPoolExecutor. On Jean Zay (40 CPUs, 50 samples via Slurm array),
+the full experiment (9 N values × 20 replications) takes ~2h per sample,
+with all 50 samples running in parallel.
 
 Usage (from project root):
     python scripts/run_convergence.py \
@@ -44,7 +45,7 @@ from src.quantization.quantize import quantize_model
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
 
-N_DIRECTIONS_GRID = [10, 20, 30, 50, 75, 100, 150, 200]
+N_DIRECTIONS_GRID = [10, 20, 30, 50, 75, 100, 150, 200, 300]
 
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,10 @@ def _run_single_task(N: int):
     """One task = one call to estimate_polytope_width for a given N.
     Returns (N, mean_width) so results can be grouped by N afterwards.
     """
+    # Re-seed from OS entropy before sampling directions.
+    # On Linux, forked workers inherit the parent's numpy random state,
+    # so without this all replications would use identical directions → std ≈ 0.
+    np.random.seed()
     out = estimate_polytope_width(
         _WORKER_A, _WORKER_B, _WORKER_BOUNDS,
         n_directions=N,
