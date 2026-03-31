@@ -1,0 +1,24 @@
+{
+  "sample_idx": 1,
+  "model_path": "checkpoints/fashion_mlp_best.pth",
+  "data_path": "data/fashionMNIST_correct_mlp.pt",
+  "n_directions": 20,
+  "n_directions_used": 20,
+  "bits_grid": [
+    4,
+    6,
+    8,
+    10,
+    12,
+    16
+  ],
+  "width_correct": 40.05210965471165,
+  "widths_both": {
+    "4": 38.17513609608246,
+    "6": 39.57691328443826,
+    "8": 39.975123151191,
+    "10": 40.03285491253642,
+    "12": 40.047592902180334,
+    "16": 40.051818185475575
+  }
+}
