@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=40
-#SBATCH --array=0-999          # first batch (samples 0–999); resubmit with 1000-1999 for the second
-#SBATCH --time=00:30:00
+#SBATCH --array=0-4          # first batch (samples 0–999); resubmit with 1000-1999 for the second
+#SBATCH --time=01:00:00
 #SBATCH --output=logs/volumes_%A_%a.out
 #SBATCH --error=logs/volumes_%A_%a.err
 

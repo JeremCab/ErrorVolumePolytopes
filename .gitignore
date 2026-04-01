@@ -25,3 +25,7 @@ dist/
 # Raw datasets (large binary files — re-download via torchvision)
 data/MNIST/
 data/FashionMNIST/
+
+# Results
+results/convergence_mlp/
+results/volumes_mlp/
