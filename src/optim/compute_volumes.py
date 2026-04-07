@@ -3,6 +3,42 @@ from scipy.optimize import linprog
 from src.optim.build_polytopes import build_model_correct_polytope, build_two_class_polytopes
 
 
+_LP_EPS = 1e-6   # slack added to b_ub to absorb floating-point constraint violations
+
+
+def _prep_lp(A: np.ndarray, b: np.ndarray, eps: float = _LP_EPS):
+    """
+    Prepare (A, b_ub) for linprog from a polytope in Ax + b <= 0 convention.
+
+    Two pre-processing steps that improve numerical robustness, especially for
+    CNN polytopes whose constraint matrices can be very large:
+
+    1. **Zero-row pruning**: rows where ||A_row|| ≈ 0 carry no information
+       (they arise from saturated neurons with zero shortcut weight) and can
+       confuse the simplex solver.  They are removed.
+
+    2. **Epsilon slack**: a small eps is added to b_ub = -b so that tiny
+       floating-point violations (up to ~1e-7) at the reference point x_0 do
+       not make the LP appear infeasible to HiGHS.
+
+    Parameters
+    ----------
+    A   : (m, d) numpy array  — constraint LHS
+    b   : (m,)   numpy array  — constraint RHS  (Ax + b <= 0 convention)
+    eps : float               — slack added to b_ub (default 1e-6)
+
+    Returns
+    -------
+    A_pruned : (m', d)  numpy array   (m' <= m)
+    b_ub     : (m',)    numpy array   = -b_pruned + eps
+    """
+    row_norms = np.linalg.norm(A, axis=1)
+    keep = row_norms > 1e-10
+    A_pruned = A[keep]
+    b_ub = -b[keep] + eps
+    return A_pruned, b_ub
+
+
 def estimate_polytope_width(A_correct, b_correct, bounds,
                              A_both=None, b_both=None,
                              n_directions=100, verbose=False):
@@ -50,10 +86,10 @@ def estimate_polytope_width(A_correct, b_correct, bounds,
 
     d = A_correct.shape[1]
 
-    # --- Precompute b_ub outside the loop ---
-    b_ub_correct = -b_correct
+    # --- Precompute b_ub outside the loop (prune zero rows + epsilon slack) ---
+    A_correct, b_ub_correct = _prep_lp(A_correct, b_correct)
     if paired:
-        b_ub_both = -b_both
+        A_both, b_ub_both = _prep_lp(A_both, b_both)
 
     # --- Sample directions once, shared across both polytopes ---
     directions = np.random.randn(n_directions, d)
@@ -179,9 +215,12 @@ def estimate_multi_bit_widths(A_correct, b_correct, bounds, polytopes_dict,
 
     d = A_correct.shape[1]
 
-    # --- Precompute b_ub = -b outside the loop ---
-    b_ub_correct = -b_correct
-    b_ub_dict = {bits: -b_b for bits, (_, b_b) in polytopes_np.items()}
+    # --- Precompute b_ub outside the loop (prune zero rows + epsilon slack) ---
+    A_correct, b_ub_correct = _prep_lp(A_correct, b_correct)
+    prepped = {bits: _prep_lp(A_b, b_b) for bits, (A_b, b_b) in polytopes_np.items()}
+    # Unpack into separate dicts for clarity
+    A_dict    = {bits: Ab[0] for bits, Ab in prepped.items()}
+    b_ub_dict = {bits: Ab[1] for bits, Ab in prepped.items()}
 
     # --- Sample directions once, shared across all polytopes ---
     directions = np.random.randn(n_directions, d)
@@ -206,9 +245,9 @@ def estimate_multi_bit_widths(A_correct, b_correct, bounds, polytopes_dict,
         # --- All b-approximated polytopes ---
         w_bits = {}
         failed = False
-        for bits, (A_b, _) in polytopes_np.items():
-            res_max_b = linprog(c=-u, A_ub=A_b, b_ub=b_ub_dict[bits], bounds=bounds, method="highs")
-            res_min_b = linprog(c= u, A_ub=A_b, b_ub=b_ub_dict[bits], bounds=bounds, method="highs")
+        for bits in A_dict:
+            res_max_b = linprog(c=-u, A_ub=A_dict[bits], b_ub=b_ub_dict[bits], bounds=bounds, method="highs")
+            res_min_b = linprog(c= u, A_ub=A_dict[bits], b_ub=b_ub_dict[bits], bounds=bounds, method="highs")
             if not (res_max_b.success and res_min_b.success):
                 if verbose:
                     print(f"Direction {k}: LP failed for bits={bits}, skipping direction.")

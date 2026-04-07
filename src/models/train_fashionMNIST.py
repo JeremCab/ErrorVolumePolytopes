@@ -67,13 +67,14 @@ elif args.model == "cnn":
     model = FashionCNN_Small().to(device)
     
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=1e-3)
+# optimizer = optim.Adam(model.parameters(), lr=1e-3)   # for MLP
+optimizer = optim.Adam(model.parameters(), lr=5e-3)     # for CNN
 scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
 
 # ------------------------- #
 # Training setup            #
 # ------------------------- #
-num_epochs = 50
+num_epochs = 100
 best_val_acc = 0.0
 
 # Directory to save model

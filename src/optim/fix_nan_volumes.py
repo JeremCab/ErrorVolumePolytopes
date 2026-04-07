@@ -83,6 +83,8 @@ def _run_direction(k):
     u = _WORKER_DIRECTIONS[k]
 
     # --- Correct polytope ---
+    # _WORKER_B_UB_CORRECT already has zero-rows pruned and epsilon applied
+    # (prepared by _prep_lp in the main process before pool creation)
     res_max_c = linprog(c=-u, A_ub=_WORKER_A_CORRECT, b_ub=_WORKER_B_UB_CORRECT,
                         bounds=_WORKER_BOUNDS, method="highs")
     res_min_c = linprog(c= u, A_ub=_WORKER_A_CORRECT, b_ub=_WORKER_B_UB_CORRECT,
@@ -227,11 +229,11 @@ def fix_nan_volumes(results_dir, model_path, data_path,
             model, qmodels_dict, x_batch, c
         )
 
-        # Convert to numpy
-        A_np         = to_numpy(A_correct)
-        b_ub_correct = -to_numpy(b_correct)
+        # Convert to numpy and apply zero-row pruning + epsilon slack
+        from src.optim.compute_volumes import _prep_lp
+        A_np, b_ub_correct = _prep_lp(to_numpy(A_correct), to_numpy(b_correct))
         polytopes_np = {
-            bits: (to_numpy(A_b), -to_numpy(b_b))
+            bits: _prep_lp(to_numpy(A_b), to_numpy(b_b))
             for bits, (A_b, b_b) in polytopes_dict.items()
         }
 

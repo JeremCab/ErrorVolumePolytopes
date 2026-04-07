@@ -19,12 +19,24 @@ Output: one JSON file per sample in --output_dir.
 Already-computed samples are skipped automatically (safe to resubmit).
 
 Usage (from project root):
+
+  MLP:
     python scripts/run_volumes.py \\
+        --model_type    mlp \\
         --sample_idx    0 \\
         --model_path    checkpoints/fashion_mlp_best.pth \\
         --data_path     data/fashionMNIST_correct_mlp.pt \\
         --n_directions  200 \\
-        --output_dir    results/volumes
+        --output_dir    results/volumes_mlp
+
+  CNN:
+    python scripts/run_volumes.py \\
+        --model_type    cnn \\
+        --sample_idx    0 \\
+        --model_path    checkpoints/fashion_cnn_best.pth \\
+        --data_path     data/fashionMNIST_correct_cnn.pt \\
+        --n_directions  200 \\
+        --output_dir    results/volumes_cnn
 """
 
 import argparse
@@ -43,8 +55,9 @@ from scipy.optimize import linprog
 import torch
 from tqdm import tqdm
 
-from src.models.networks import FashionMLP_Large
+from src.models.networks import FashionMLP_Large, FashionCNN_Small
 from src.optim.build_polytopes import build_all_polytopes
+from src.optim.build_polytopes_cnn import build_cnn_all_polytopes
 from src.quantization.quantize import quantize_model
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -113,8 +126,11 @@ def _run_direction(k):
 # Loading helpers
 # ---------------------------------------------------------------------------
 
-def load_model(model_path):
-    model = FashionMLP_Large()
+def load_model(model_path, model_type):
+    if model_type == "cnn":
+        model = FashionCNN_Small()
+    else:
+        model = FashionMLP_Large()
     state_dict = torch.load(model_path, weights_only=True, map_location="cpu")
     model.load_state_dict(state_dict)
     model.eval()
@@ -153,11 +169,11 @@ def run_volumes(A_correct, b_correct, polytopes_dict, bounds, n_directions, n_wo
     def to_numpy(t):
         return t.detach().cpu().numpy() if hasattr(t, "detach") else np.asarray(t)
 
-    A_np         = to_numpy(A_correct)
-    b_ub_correct = -to_numpy(b_correct)
+    from src.optim.compute_volumes import _prep_lp
+    A_np, b_ub_correct = _prep_lp(to_numpy(A_correct), to_numpy(b_correct))
 
     polytopes_np = {
-        bits: (to_numpy(A_b), -to_numpy(b_b))
+        bits: _prep_lp(to_numpy(A_b), to_numpy(b_b))
         for bits, (A_b, b_b) in polytopes_dict.items()
     }
 
@@ -229,15 +245,24 @@ def main():
     parser = argparse.ArgumentParser(
         description="Volume experiment: mean-width of correct and b-approximated polytopes."
     )
+    parser.add_argument("--model_type",   type=str, default="mlp",
+                        choices=["mlp", "cnn"],
+                        help="Model architecture: mlp or cnn (default: mlp)")
     parser.add_argument("--sample_idx",   type=int, required=True)
-    parser.add_argument("--model_path",   type=str,
-                        default="checkpoints/fashion_mlp_best.pth")
-    parser.add_argument("--data_path",    type=str,
-                        default="data/fashionMNIST_correct_mlp.pt")
+    parser.add_argument("--model_path",   type=str, default=None)
+    parser.add_argument("--data_path",    type=str, default=None)
     parser.add_argument("--n_directions", type=int, default=200)
     parser.add_argument("--n_workers",    type=int, default=_default_n_workers())
-    parser.add_argument("--output_dir",   type=str, default="results/volumes")
+    parser.add_argument("--output_dir",   type=str, default=None)
     args = parser.parse_args()
+
+    # Fill defaults that depend on model_type
+    if args.model_path is None:
+        args.model_path = f"checkpoints/fashion_{args.model_type}_best.pth"
+    if args.data_path is None:
+        args.data_path = f"data/fashionMNIST_correct_{args.model_type}.pt"
+    if args.output_dir is None:
+        args.output_dir = f"results/volumes_{args.model_type}"
 
     output_dir  = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -248,6 +273,7 @@ def main():
         log.info(f"Sample {args.sample_idx} already computed. Skipping.")
         sys.exit(0)
 
+    log.info(f"Model type   : {args.model_type}")
     log.info(f"Sample idx   : {args.sample_idx}")
     log.info(f"Model        : {args.model_path}")
     log.info(f"N directions : {args.n_directions}")
@@ -256,13 +282,18 @@ def main():
 
     # Load model
     log.info("\nLoading model...")
-    model = load_model(args.model_path)
+    model = load_model(args.model_path, args.model_type)
 
     # Load sample
     log.info("Loading sample...")
     x, c = load_sample(args.data_path, args.sample_idx)
     log.info(f"x shape: {x.shape}  label: {c}")
-    x_batch = x.flatten().unsqueeze(0)   # (1, 784)
+
+    # Prepare input batch (shape depends on model type)
+    if args.model_type == "cnn":
+        x_batch = x.unsqueeze(0)          # (1, 1, 28, 28)
+    else:
+        x_batch = x.flatten().unsqueeze(0)  # (1, 784)
 
     # Build polytopes
     log.info("Building polytopes...")
@@ -276,7 +307,14 @@ def main():
         qmodels_dict[bits] = qmodel
 
     # Model shortcuts computed once; one b-approximated polytope per bit-width
-    A_correct, b_correct, polytopes_dict = build_all_polytopes(model, qmodels_dict, x_batch, c)
+    if args.model_type == "cnn":
+        A_correct, b_correct, polytopes_dict = build_cnn_all_polytopes(
+            model, qmodels_dict, x_batch, c
+        )
+    else:
+        A_correct, b_correct, polytopes_dict = build_all_polytopes(
+            model, qmodels_dict, x_batch, c
+        )
     log.info(f"A_correct (model-only): {tuple(A_correct.shape)}")
     for bits, (A_both, _) in polytopes_dict.items():
         log.info(f"A_both (bits={bits:2d}): {tuple(A_both.shape)}")
@@ -292,6 +330,7 @@ def main():
 
     # Save
     output = {
+        "model_type":        args.model_type,
         "sample_idx":        args.sample_idx,
         "model_path":        args.model_path,
         "data_path":         args.data_path,

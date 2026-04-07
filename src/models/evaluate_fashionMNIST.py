@@ -1,6 +1,7 @@
 # ==================================================================== #
 # Save correctly classified subset (Fashion-MNIST)                     #
 # run: python -m src.models.evaluate_fashionMNIST --model <model_type> #
+# Add --no-save to disable saving (e.g. for quick accuracy check)      #
 # ==================================================================== #
 
 import torch
@@ -15,8 +16,27 @@ from src.models.networks import FashionMLP_Large, FashionCNN_Small
 # Argument parsing          #
 # ------------------------- #
 parser = argparse.ArgumentParser(description="Evaluate model and save correct subset")
-parser.add_argument("--model", type=str, choices=["mlp", "cnn"], default="mlp",
-                    help="Model type: mlp or cnn")
+
+parser.add_argument("--model", 
+    type=str, 
+    choices=["mlp", "cnn"], 
+    default="mlp",
+    help="Model type: mlp or cnn")
+
+parser.add_argument(
+    "--save",
+    action="store_true",
+    default=True,
+    help="Save results (default: True)"
+)
+
+parser.add_argument(
+    "--no-save",
+    dest="save",
+    action="store_false",
+    help="Disable saving"
+)
+
 args = parser.parse_args()
 
 print(f"Using model: {args.model}")
@@ -85,11 +105,12 @@ print(f"Train accuracy: {accuracy*100:.2f}%")
 # ---------------------- #
 # Create subset and save #
 # ---------------------- #
-correct_subset = Subset(train_dataset, correct_indices)
+if args.save:
+    correct_subset = Subset(train_dataset, correct_indices)
 
-save_path = f"./data/fashionMNIST_correct_{args.model}.pt"
-os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    save_path = f"./data/fashionMNIST_correct_{args.model}.pt"
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-torch.save(correct_subset, save_path)
+    torch.save(correct_subset, save_path)
 
-print(f"Saved correctly classified subset to {save_path}")
+    print(f"Saved correctly classified subset to {save_path}")
