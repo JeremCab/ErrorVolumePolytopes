@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=40
-#SBATCH --array=0-49          # one task per sample — adjust range as needed
-#SBATCH --time=04:00:00
+#SBATCH --array=0-9          # one task per sample — adjust range as needed
+#SBATCH --time=06:00:00
 #SBATCH --output=logs/convergence_cnn_%A_%a.out
 #SBATCH --error=logs/convergence_cnn_%A_%a.err
 
@@ -25,4 +25,5 @@ srun python $WORK/ErrorVolumePolytopes/scripts/run_convergence.py \
     --data_path     $WORK/ErrorVolumePolytopes/data/fashionMNIST_correct_cnn.pt \
     --bits          4 \
     --n_replications 20 \
+    --n_directions_grid 10 25 50 100 150 200 \
     --output_dir    $WORK/ErrorVolumePolytopes/results
