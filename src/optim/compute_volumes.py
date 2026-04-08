@@ -1,6 +1,6 @@
 import numpy as np
 from scipy.optimize import linprog
-from src.optim.build_polytopes import build_model_correct_polytope, build_two_class_polytopes
+from src.optim.build_polytopes import build_two_class_polytopes
 
 
 _LP_EPS = 1e-6   # slack added to b_ub to absorb floating-point constraint violations
@@ -371,14 +371,12 @@ if __name__ == "__main__":
 
     bounds = [(-1., 1.)] * dim
     
-    # Correct polytope: built ONCE outside the loop
-    A_correct, b_correct = build_model_correct_polytope(model, x_0.flatten().unsqueeze(0), c)
-
     polytope_dict = {}
+    A_correct, b_correct = None, None
     for b in [4, 8]:
         qmodel_b = quantize_model(model, bits=b)
         qmodel_b.to(device).eval()
-        _, _, A_both, b_both = build_two_class_polytopes(model, qmodel_b, x_0, c)
+        A_correct, b_correct, A_both, b_both = build_two_class_polytopes(model, qmodel_b, x_0, c)
         polytope_dict[b] = (A_both, b_both)
 
     print("LP method...")

@@ -102,40 +102,6 @@ def build_class_constraints_from_shortcuts(W_l, B_l, c):
     return A_class, b_class
 
 
-def build_model_correct_polytope(model, x, c):
-    """
-    Build the correct polytope from the full-precision model alone.
-
-    This is the region where:
-      1. x lies in the same activation region as x_0 (model activation constraints)
-      2. The model classifies x as class c (model classification constraints)
-
-    No qmodel is involved, so this polytope does not depend on the quantization
-    bit-width. Use this as the fixed reference polytope when comparing volumes
-    across multiple bit-widths.
-
-    Convention: Ax + b <= 0
-
-    Parameters
-    ----------
-    model : torch.nn.Module
-    x : torch.Tensor of shape (1, input_dim)
-    c : int
-        True class label.
-
-    Returns
-    -------
-    A : torch.Tensor of shape (n_constraints, input_dim)
-    b : torch.Tensor of shape (n_constraints,)
-    """
-    W_l, B_l, m_l = compute_shortcut_weights(model, x)
-    A_act, b_act   = build_base_polytope_from_shortcuts(W_l, B_l, m_l)
-    A_cls, b_cls   = build_class_constraints_from_shortcuts(W_l, B_l, c)
-    A = torch.cat([A_act, A_cls], dim=0)
-    b = torch.cat([b_act, b_cls], dim=0)
-    return A, b
-
-
 def build_two_class_polytopes(model, qmodel, x, c):
     """
     Build two polytopes:
@@ -213,8 +179,8 @@ def build_all_polytopes(model, qmodels_dict, x, c):
     model in a single pass, computing model shortcuts only once.
 
     This avoids recomputing ``compute_shortcut_weights(model, x)`` once per
-    bit-width (which would happen if ``build_model_correct_polytope`` and
-    ``build_two_class_polytopes`` were called separately for each bit-width).
+    bit-width (which would happen if ``build_two_class_polytopes`` were called
+    separately for each bit-width).
 
     Convention: Ax + b <= 0
 

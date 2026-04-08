@@ -225,31 +225,6 @@ def _collect_max_pool2d(pool: nn.MaxPool2d, msg: _Message, cst: _Constraints) ->
 # Convert non-sequential CNNs to nn.Sequential                                #
 # =========================================================================== #
 
-def fashion_cnn_to_sequential(model: nn.Module) -> nn.Sequential:
-    """
-    Convert a FashionCNN_Small instance to an equivalent nn.Sequential
-    that _collect can process.
-
-    FashionCNN_Small uses F.relu (functional) and view() which are
-    invisible to _collect. This wraps the model's sub-modules in the
-    Sequential form: Conv → ReLU → MaxPool → Conv → ReLU → MaxPool →
-    Flatten → Linear → ReLU → Dropout → Linear.
-    """
-    return nn.Sequential(
-        model.conv1,
-        nn.ReLU(),
-        model.pool,
-        model.conv2,
-        nn.ReLU(),
-        model.pool,
-        nn.Flatten(),
-        model.fc1,
-        nn.ReLU(),
-        model.dropout,
-        model.fc2,
-    )
-
-
 def _fx_to_sequential(model: nn.Module) -> nn.Sequential:
     """
     Use torch.fx symbolic tracing to convert a sequential-style CNN to nn.Sequential.
@@ -271,7 +246,7 @@ def _fx_to_sequential(model: nn.Module) -> nn.Sequential:
         raise RuntimeError(
             f"torch.fx symbolic tracing failed for {type(model).__name__}: {exc}.\n"
             "Either restructure the model as nn.Sequential, or pass a custom "
-            "to_seq_fn to build_cnn_correct_polytope / build_cnn_all_polytopes."
+            "to_seq_fn to build_two_class_cnn_polytopes / build_cnn_all_polytopes."
         ) from exc
 
     named_mods = dict(model.named_modules())
@@ -394,53 +369,81 @@ def _constraints_to_Ab(cst: _Constraints,
 # Public API                                                                   #
 # =========================================================================== #
 
-def build_cnn_correct_polytope(
+def build_two_class_cnn_polytopes(
     model: nn.Module,
+    qmodel: nn.Module,
     x: torch.Tensor,
     c: int,
     to_seq_fn=None,
-) -> tuple[torch.Tensor, torch.Tensor]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Build the correct polytope for a CNN from the full-precision model only.
+    Build two polytopes for a CNN, matching the MLP convention of
+    build_two_class_polytopes in build_polytopes.py.
 
-    The polytope is the set of inputs x' such that:
-      1. x' lies in the same activation region as x (same ReLU / max-pool pattern)
-      2. The model classifies x' as class c
+    1) correct_polytope (A_correct, b_correct):
+        - activation constraints from model AND qmodel
+        - model classifies x' as class c
+
+    2) correct_and_qcorrect_polytope (A_both, b_both):
+        - same activation constraints as A_correct
+        - qmodel also classifies x' as class c
 
     Convention: Ax + b <= 0
 
     Parameters
     ----------
-    model : nn.Module
-        Full-precision CNN, in eval mode.
-    x : torch.Tensor
-        Reference input. Shape (1, C, H, W) or (C, H, W).
-    c : int
-        True class label.
+    model : nn.Module — full-precision CNN, eval mode
+    qmodel : nn.Module — quantized CNN, eval mode
+    x : torch.Tensor — shape (1, C, H, W) or (C, H, W)
+    c : int — true class label
     to_seq_fn : callable or None
-        Function that converts model to nn.Sequential for _collect.
-        Defaults to fashion_cnn_to_sequential.
 
     Returns
     -------
-    A : torch.Tensor of shape (n_constraints, input_flat_dim)
-    b : torch.Tensor of shape (n_constraints,)
+    A_correct, b_correct : torch.Tensor
+    A_both, b_both : torch.Tensor
     """
     if to_seq_fn is None:
         to_seq_fn = model_to_sequential
 
     x_sample = x.squeeze(0) if x.dim() == 4 else x  # (C, H, W)
 
-    seq = to_seq_fn(model)
-    cst = _Constraints()
-    msg = _Message(x_sample)
-
+    # --- Model constraints (computed once) ---
+    seq_model = to_seq_fn(model)
+    cst_model = _Constraints()
+    msg_model = _Message(x_sample)
     with torch.no_grad():
-        msg = _collect(seq, msg, cst)
+        msg_model = _collect(seq_model, msg_model, cst_model)
 
-    # After collect, s_weight has shape (input_flat_dim, n_classes)
-    A, b = _constraints_to_Ab(cst, msg.s_weight, msg.s_bias, c)
-    return A, b
+    # --- Qmodel constraints (computed once) ---
+    seq_q = to_seq_fn(qmodel)
+    cst_q = _Constraints()
+    msg_q = _Message(x_sample)
+    with torch.no_grad():
+        msg_q = _collect(seq_q, msg_q, cst_q)
+
+    # --- Combined activation constraints (model + qmodel) ---
+    cst_both = _Constraints(
+        U_weight = cst_model.U_weight + cst_q.U_weight,
+        U_bias   = cst_model.U_bias   + cst_q.U_bias,
+        S_weight = cst_model.S_weight + cst_q.S_weight,
+        S_bias   = cst_model.S_bias   + cst_q.S_bias,
+    )
+    A_act, b_act = _activation_constraints_to_Ab(cst_both)
+
+    # --- Classification constraints ---
+    A_cls_m, b_cls_m = _class_constraints_to_Ab(msg_model.s_weight, msg_model.s_bias, c)
+    A_cls_q, b_cls_q = _class_constraints_to_Ab(msg_q.s_weight,     msg_q.s_bias,     c)
+
+    # A_correct : model act + qmodel act + model cls
+    A_correct = torch.cat([A_act, A_cls_m], dim=0)
+    b_correct = torch.cat([b_act, b_cls_m], dim=0)
+
+    # A_both : A_correct + qmodel cls
+    A_both = torch.cat([A_correct, A_cls_q], dim=0)
+    b_both = torch.cat([b_correct, b_cls_q], dim=0)
+
+    return A_correct, b_correct, A_both, b_both
 
 
 def build_cnn_all_polytopes(
@@ -583,6 +586,7 @@ if __name__ == "__main__":
     model = FashionCNN_Small()
     model.load_state_dict(torch.load(model_path, weights_only=True, map_location="cpu"))
     model.to(device).eval()
+    qmodel = quantize_model(model, bits=8).to(device).eval()
 
     dataset = torch.load(data_path, weights_only=False)
     x, c    = dataset[0]
@@ -590,23 +594,18 @@ if __name__ == "__main__":
     print(f"Pixel range  : [{x.min().item():.2f}, {x.max().item():.2f}]")
 
     # --------------------------------------------------------------- #
-    # Verify model_to_sequential (torch.fx) vs. hand-written version #
+    # Verify model_to_sequential (torch.fx) matches model output      #
     # --------------------------------------------------------------- #
-    print("\n*** Verifying model_to_sequential (FX tracing) vs. fashion_cnn_to_sequential... ***\n")
+    print("\n*** Verifying model_to_sequential (FX tracing) matches model output... ***\n")
 
-    seq_fx     = model_to_sequential(model)
-    seq_manual = fashion_cnn_to_sequential(model)
-
+    seq_fx  = model_to_sequential(model)
     x_batch = x.unsqueeze(0) if x.dim() == 3 else x
     with torch.no_grad():
-        out_fx     = seq_fx(x_batch)
-        out_manual = seq_manual(x_batch)
-        out_model  = model(x_batch)
+        out_fx    = seq_fx(x_batch)
+        out_model = model(x_batch)
 
-    match_fx_manual = torch.allclose(out_fx, out_manual)
-    match_fx_model  = torch.allclose(out_fx, out_model)
-    print(f"FX == manual : {match_fx_manual}")
-    print(f"FX == model  : {match_fx_model}")
+    match = torch.allclose(out_fx, out_model)
+    print(f"seq_fx == model : {match}")
     print(f"Sequential layers (FX): {[type(m).__name__ for m in seq_fx]}")
 
     # ------------------------------------------- #
@@ -614,7 +613,7 @@ if __name__ == "__main__":
     # ------------------------------------------- #
     print("\n*** Building correct polytope (full-precision CNN)... ***\n")
 
-    A_correct, b_correct = build_cnn_correct_polytope(model, x, c)
+    A_correct, b_correct, _, _ = build_two_class_cnn_polytopes(model, qmodel, x.unsqueeze(0).to(device), int(c))
     print(f"A_correct shape : {tuple(A_correct.shape)}")
     print(f"b_correct shape : {tuple(b_correct.shape)}")
 
@@ -632,10 +631,10 @@ if __name__ == "__main__":
     for qm in qmodels_dict.values():
         qm.eval()
 
-    A_correct2, b_correct2, polytopes_dict = build_cnn_all_polytopes(
+    A_base, b_base, polytopes_dict = build_cnn_all_polytopes(
         model, qmodels_dict, x, c
     )
-    print(f"A_correct shape (from build_cnn_all_polytopes) : {tuple(A_correct2.shape)}")
+    print(f"A_base shape (from build_cnn_all_polytopes) : {tuple(A_base.shape)}")
 
     for bits, (A_both, b_both) in polytopes_dict.items():
         in_both = check_polytope_membership(A_both, b_both, x_vec)
