@@ -8,7 +8,7 @@ from src.shortcuts.shortcut_weights import pack_shortcut_weights
 
 
 # ---------------------------------- #
-# Build polytopes' linear contraints #
+# Build polytopes' linear contraints #
 # ---------------------------------- #
 
 
@@ -48,14 +48,14 @@ def build_base_polytope_from_shortcuts(W_l, B_l, m_l):
 
     B = packed_matrix[:, 0]
     W = packed_matrix[:, 1:]
-    
+
     # sign vector s with the same shape as B, where:
     # s[i] = -1 if packed_mask[i] is True
     # s[i] = +1 if packed_mask[i] is False
     s = torch.where(packed_mask, -torch.ones_like(B), torch.ones_like(B))
 
-    A = s.unsqueeze(1) * W # unsaturated rows multiplied by -1
-    b = s * B              # unsaturated rows multiplied by -1
+    A = s.unsqueeze(1) * W # unsaturated rows multiplied by -1
+    b = s * B              # unsaturated rows multiplied by -1
 
     return A, b
 
@@ -175,35 +175,38 @@ def build_two_class_polytopes(model, qmodel, x, c):
 
 def build_all_polytopes(model, qmodels_dict, x, c):
     """
-    Build the correct polytope and one b-approximated polytope per quantized
-    model in a single pass, computing model shortcuts only once.
+    Build three nested polytopes per quantized model in a single pass,
+    computing model shortcuts only once.
 
-    This avoids recomputing ``compute_shortcut_weights(model, x)`` once per
-    bit-width (which would happen if ``build_two_class_polytopes`` were called
-    separately for each bit-width).
+    Three polytopes per bit-width, with the containment chain
+    A_base ⊇ A_correct ⊇ A_both:
+
+    A_base (model-only reference, shared across all bit-widths):
+        model activation + model classification
+
+    A_correct (per bit-width):
+        model activation + model classification + qmodel activation
+        = A_base + qmodel activation
+
+    A_both (per bit-width):
+        model activation + model classification + qmodel activation
+        + qmodel classification
+        = A_correct + qmodel classification  (differ by exactly 9 constraints)
 
     Convention: Ax + b <= 0
 
     Parameters
     ----------
     model : torch.nn.Module
-        Full-precision model.
     qmodels_dict : dict {bits (int): qmodel (torch.nn.Module)}
-        One quantized model per bit-width.
     x : torch.Tensor of shape (1, input_dim)
-        Reference input (defines the activation region).
     c : int
-        True class label.
 
     Returns
     -------
-    A_correct : torch.Tensor of shape (n_constraints, input_dim)
-        Correct polytope (model activation + model classification).
-    b_correct : torch.Tensor of shape (n_constraints,)
-    polytopes_dict : dict {bits (int): (A_both, b_both)}
-        For each bit-width, the b-approximated polytope:
-        model activation + qmodel activation + model classification
-        + qmodel classification.
+    A_base : torch.Tensor of shape (n_base, input_dim)
+    b_base : torch.Tensor of shape (n_base,)
+    polytopes_dict : dict {bits (int): (A_correct, b_correct, A_both, b_both)}
     """
 
     # Model shortcuts — computed ONCE
@@ -211,22 +214,27 @@ def build_all_polytopes(model, qmodels_dict, x, c):
     A_act, b_act   = build_base_polytope_from_shortcuts(W_l, B_l, m_l)
     A_cls, b_cls   = build_class_constraints_from_shortcuts(W_l, B_l, c)
 
-    # Correct polytope (model-only, no qmodel)
-    A_correct = torch.cat([A_act, A_cls], dim=0)
-    b_correct = torch.cat([b_act, b_cls], dim=0)
+    # A_base: model-only (independent of quantization)
+    A_base = torch.cat([A_act, A_cls], dim=0)
+    b_base = torch.cat([b_act, b_cls], dim=0)
 
-    # One b-approximated polytope per bit-width
     polytopes_dict = {}
     for bits, qmodel in qmodels_dict.items():
         Wq_l, Bq_l, mq_l = compute_shortcut_weights(qmodel, x)
         A_act_q, b_act_q  = build_base_polytope_from_shortcuts(Wq_l, Bq_l, mq_l)
         A_cls_q, b_cls_q  = build_class_constraints_from_shortcuts(Wq_l, Bq_l, c)
 
-        A_both = torch.cat([A_act, A_act_q, A_cls, A_cls_q], dim=0)
-        b_both = torch.cat([b_act, b_act_q, b_cls, b_cls_q], dim=0)
-        polytopes_dict[bits] = (A_both, b_both)
+        # A_correct: A_base + qmodel activation
+        A_correct = torch.cat([A_base, A_act_q], dim=0)
+        b_correct = torch.cat([b_base, b_act_q], dim=0)
 
-    return A_correct, b_correct, polytopes_dict
+        # A_both: A_correct + qmodel classification (differ by 9 constraints)
+        A_both = torch.cat([A_correct, A_cls_q], dim=0)
+        b_both = torch.cat([b_correct, b_cls_q], dim=0)
+
+        polytopes_dict[bits] = (A_correct, b_correct, A_both, b_both)
+
+    return A_base, b_base, polytopes_dict
 
 
 def ensure_vector(x):
@@ -305,7 +313,7 @@ def evaluate_polytopes(model, qmodel, dataset, indices):
             pred_model = model(x_batch).argmax(dim=1).item()
             pred_qmodel = qmodel(x_batch).argmax(dim=1).item()
 
-        # 🔴 Skip if model is wrong
+        # Skip if model is wrong
         if pred_model != c:
             continue
 
@@ -341,72 +349,89 @@ if __name__ == "__main__":
 
     import torch
 
-    from data.mnist_data import load_mnist_datasets
-    from src.models.networks import SmallMLP
+    from src.models.networks import FashionMLP_Large
     from src.quantization.quantize import quantize_model
-    from src.shortcuts.shortcut_weights import *
-
-    # =============== #
-    # Build polytopes #
-    # =============== #
 
     # -------------------- #
-    # Load models and data #
+    # Load model and data  #
     # -------------------- #
-    print("\n\n*** Load models and data... ***\n\n")
+    print("\n\n*** Loading FashionMLP_Large and fashionMNIST_correct_mlp... ***\n")
 
-    model_type = "smallmlp"
-    nb_epochs = 10
-    bits = 4
-    p = 0.85
-    device = torch.device("cpu")
+    fashion_model = FashionMLP_Large()
+    fashion_model.load_state_dict(
+        torch.load("./checkpoints/fashion_mlp_best.pth",
+                   weights_only=True, map_location="cpu")
+    )
+    fashion_model.eval()
 
-    # Model loading
-    model_name = f"{model_type}_{nb_epochs}.pth"
-    model_path = os.path.join("./checkpoints", model_name)
+    fashion_dataset = torch.load(
+        "./data/fashionMNIST_correct_mlp.pt", weights_only=False
+    )
+    x_f, c_f  = fashion_dataset[0]
+    x_f_batch = x_f.flatten().unsqueeze(0)  # (1, 784)
+    x_f_vec   = x_f_batch.view(-1)          # (784,)
 
-    # Model
-    model = SmallMLP()
-    model.load_state_dict(torch.load(model_path)['model_state'])
-    model.to(device).eval()
+    bits_list    = [4, 8, 16]
+    qmodels_dict = {b: quantize_model(fashion_model, bits=b) for b in bits_list}
+    for qm in qmodels_dict.values():
+        qm.eval()
 
-    # qModel
-    qmodel = quantize_model(model, bits=bits)
-    qmodel.to(device).eval()
-
-    # Dataset (and sample)
-    _, test_dataset = load_mnist_datasets()
-    x_0, c = test_dataset[123]
-    x_0 = x_0.flatten().unsqueeze(0) # shape (1, input_dim)
-    print("Sample x_0 shape:", x_0.shape)
-    print("Models and dataset have been loaded.")
+    print(f"Sample shape: {x_f_batch.shape}  label: {int(c_f)}")
+    print("Models and dataset loaded.\n")
 
 
-    # ---------------------------------------------- #
-    # Test single sample membership in the polytopes #
-    # ---------------------------------------------- #
-    print("\n\n*** Testing single sample in the polytopes... ***\n\n")
-    
-    A_correct, b_correct, A_both, b_both = build_two_class_polytopes(model, qmodel, x_0, c)
+    # ================================================== #
+    # Test build_two_class_polytopes (one bit at a time) #
+    # ================================================== #
+    print("*** Testing build_two_class_polytopes (FashionMLP_Large)... ***\n")
 
-    print("A_correct shape:", A_correct.shape)
-    print("b_correct shape:", b_correct.shape)
-    print("A_both shape:", A_both.shape)
-    print("b_both shape:", b_both.shape)
+    for bits in bits_list:
+        qmodel = qmodels_dict[bits]
+        A_correct, b_correct, A_both, b_both = build_two_class_polytopes(
+            fashion_model, qmodel, x_f_batch, int(c_f)
+        )
+        n_correct = A_correct.shape[0]
+        n_both    = A_both.shape[0]
+        diff_cb   = n_both - n_correct   # should be 9
 
-    # test A_correct x <= b_correct
-    x_vec = x_0.view(-1)  # shape (784,)
-    correct_satisfied = check_polytope_membership(A_correct, b_correct, x_0)
-    print("\nDoes x_0 satisfy correct_polytope constraints?", correct_satisfied.item())
+        in_correct = check_polytope_membership(A_correct, b_correct, x_f_vec).item()
+        in_both    = check_polytope_membership(A_both,    b_both,    x_f_vec).item()
+
+        print(f"  bits={bits:2d}")
+        print(f"    A_correct rows : {n_correct}")
+        print(f"    A_both rows    : {n_both}  (diff={diff_cb}, should be 9: {diff_cb == 9})")
+        print(f"    x_0 in A_correct : {in_correct}")
+        print(f"    x_0 in A_both    : {in_both}")
 
 
-    # --------------------------------------------- #
-    # Test many samples membership in the polytopes #
-    # --------------------------------------------- #
-    print("\n\n*** Testing many samples in the polytopes... ***\n\n")
+    # ========================================================= #
+    # Test build_all_polytopes (FashionMLP_Large, FashionMNIST) #
+    # ========================================================= #
+    print("\n\n*** Testing build_all_polytopes (FashionMLP_Large)... ***\n")
 
-    indices = list(range(1000))  # first 200 samples
-    stats = evaluate_polytopes(model, qmodel, test_dataset, indices)
+    A_base, b_base, poly_dict = build_all_polytopes(
+        fashion_model, qmodels_dict, x_f_batch, int(c_f)
+    )
 
-    for k, v in stats.items():
-        print(f"{k}: {v}")
+    print(f"A_base shape : {tuple(A_base.shape)}")
+    print(f"x_0 in A_base: {check_polytope_membership(A_base, b_base, x_f_vec).item()}")
+
+    for bits, (A_correct, b_correct, A_both, b_both) in poly_dict.items():
+        n_correct = A_correct.shape[0]
+        n_both    = A_both.shape[0]
+        n_base    = A_base.shape[0]
+        diff_cb   = n_both - n_correct   # should be 9
+
+        in_base    = check_polytope_membership(A_base,    b_base,    x_f_vec).item()
+        in_correct = check_polytope_membership(A_correct, b_correct, x_f_vec).item()
+        in_both    = check_polytope_membership(A_both,    b_both,    x_f_vec).item()
+
+        print(f"\n  bits={bits:2d}")
+        print(f"    A_correct rows : {n_correct}  (A_base {n_base} + qmodel_act {n_correct - n_base})")
+        print(f"    A_both rows    : {n_both}  (A_correct {n_correct} + {diff_cb} cls constraints)")
+        print(f"    A_both - A_correct == 9 : {diff_cb == 9}")
+        print(f"    x_0 in A_base    : {in_base}")
+        print(f"    x_0 in A_correct : {in_correct}")
+        print(f"    x_0 in A_both    : {in_both}")
+
+    print("\nDone.")

@@ -1,19 +1,20 @@
 """
 run_volumes.py
 
-For each sample, estimates the mean width of:
-  - the correct polytope  (full-precision model only, computed ONCE)
-  - one b-approximated polytope per bit-width in BITS_GRID
+For each sample, estimates the mean width of three nested polytopes:
+
+  A_base    : model activation + model classification
+              (model-only, independent of quantization)
+  A_correct : A_base + qmodel activation          (per bit-width)
+  A_both    : A_correct + qmodel classification   (per bit-width)
+
+A_base ⊇ A_correct ⊇ A_both  →  width_base ≥ width_correct ≥ width_both
 
 All polytopes share the same N=200 random directions.
-Each worker task = one direction → solves 2 + 6×2 = 14 LP calls.
+Each worker task = one direction → solves 2 + 6×4 = 26 LP calls.
 
-The correct polytope is built from the full-precision model alone and does
-NOT depend on the quantization bit-width. It is therefore a superset of
-every b-approximated polytope, ensuring width_both_b <= width_correct.
-
-Errors (1 - width_both_b / width_correct) are NOT computed here and should
-be derived from the saved widths afterwards.
+Output: mean widths of all three polytopes per bit-width saved to JSON.
+Error metrics should be derived from the saved widths in post-processing.
 
 Output: one JSON file per sample in --output_dir.
 Already-computed samples are skipped automatically (safe to resubmit).
@@ -68,58 +69,64 @@ BITS_GRID = [4, 6, 8, 10, 12, 16]
 
 # ---------------------------------------------------------------------------
 # Worker state — initialised once per worker via _init_worker.
-# Stores the correct polytope, all b-approximated polytopes, pre-sampled
+# Stores A_base, per-bit (A_correct, A_both) polytopes, pre-sampled
 # directions, and bounds. Each task is a single direction index.
 # ---------------------------------------------------------------------------
 
-_WORKER_A_CORRECT    = None
-_WORKER_B_UB_CORRECT = None
-_WORKER_POLYTOPES    = None   # {bits: (A_both_np, b_ub_both_np)}
-_WORKER_DIRECTIONS   = None   # (n_directions, d)
-_WORKER_BOUNDS       = None
+_WORKER_A_BASE     = None
+_WORKER_B_BASE     = None
+_WORKER_POLYTOPES  = None   # {bits: (A_correct_np, b_correct_np, A_both_np, b_both_np)}
+_WORKER_DIRECTIONS = None   # (n_directions, d)
+_WORKER_BOUNDS     = None
 
 
-def _init_worker(A_correct, b_ub_correct, polytopes, directions, bounds):
-    global _WORKER_A_CORRECT, _WORKER_B_UB_CORRECT
+def _init_worker(A_base, b_base, polytopes, directions, bounds):
+    global _WORKER_A_BASE, _WORKER_B_BASE
     global _WORKER_POLYTOPES, _WORKER_DIRECTIONS, _WORKER_BOUNDS
-    _WORKER_A_CORRECT    = A_correct
-    _WORKER_B_UB_CORRECT = b_ub_correct
-    _WORKER_POLYTOPES    = polytopes
-    _WORKER_DIRECTIONS   = directions
-    _WORKER_BOUNDS       = bounds
+    _WORKER_A_BASE     = A_base
+    _WORKER_B_BASE     = b_base
+    _WORKER_POLYTOPES  = polytopes
+    _WORKER_DIRECTIONS = directions
+    _WORKER_BOUNDS     = bounds
 
 
 def _run_direction(k):
     """Solve all LPs for direction k.
 
-    Returns (k, w_correct, {bits: w_both}) on success,
-    or       (k, None,      None)           if any LP fails.
+    Returns (k, w_base, {bits: (w_correct, w_both)}) on success.
+    w_base is None if the A_base LP fails (direction discarded entirely).
+    Per-bit entries are None if that bit-width's LP fails (isolated failure).
     """
     u = _WORKER_DIRECTIONS[k]
 
-    # Correct polytope (full-precision model only)
-    res_max_c = linprog(c=-u, A_ub=_WORKER_A_CORRECT, b_ub=_WORKER_B_UB_CORRECT,
-                        bounds=_WORKER_BOUNDS, method="highs")
-    res_min_c = linprog(c= u, A_ub=_WORKER_A_CORRECT, b_ub=_WORKER_B_UB_CORRECT,
-                        bounds=_WORKER_BOUNDS, method="highs")
-
-    if not (res_max_c.success and res_min_c.success):
+    # A_base (model-only)
+    res_max_base = linprog(c=-u, A_ub=_WORKER_A_BASE, b_ub=_WORKER_B_BASE,
+                           bounds=_WORKER_BOUNDS, method="highs")
+    res_min_base = linprog(c= u, A_ub=_WORKER_A_BASE, b_ub=_WORKER_B_BASE,
+                           bounds=_WORKER_BOUNDS, method="highs")
+    if not (res_max_base.success and res_min_base.success):
         return k, None, None
 
-    w_correct = (-res_max_c.fun) - res_min_c.fun
+    w_base = (-res_max_base.fun) - res_min_base.fun
 
-    # b-approximated polytopes
+    # Per-bit: A_correct and A_both (failures are isolated per bit-width)
     w_bits = {}
-    for bits, (A_b, b_ub_b) in _WORKER_POLYTOPES.items():
-        res_max_b = linprog(c=-u, A_ub=A_b, b_ub=b_ub_b,
+    for bits, (A_c, b_c, A_b, b_b) in _WORKER_POLYTOPES.items():
+        res_max_c = linprog(c=-u, A_ub=A_c, b_ub=b_c,
                             bounds=_WORKER_BOUNDS, method="highs")
-        res_min_b = linprog(c= u, A_ub=A_b, b_ub=b_ub_b,
+        res_min_c = linprog(c= u, A_ub=A_c, b_ub=b_c,
                             bounds=_WORKER_BOUNDS, method="highs")
-        if not (res_max_b.success and res_min_b.success):
-            return k, None, None
-        w_bits[bits] = (-res_max_b.fun) - res_min_b.fun
+        res_max_b = linprog(c=-u, A_ub=A_b, b_ub=b_b,
+                            bounds=_WORKER_BOUNDS, method="highs")
+        res_min_b = linprog(c= u, A_ub=A_b, b_ub=b_b,
+                            bounds=_WORKER_BOUNDS, method="highs")
+        if not all(r.success for r in [res_max_c, res_min_c, res_max_b, res_min_b]):
+            w_bits[bits] = None
+        else:
+            w_bits[bits] = ((-res_max_c.fun) - res_min_c.fun,
+                            (-res_max_b.fun) - res_min_b.fun)
 
-    return k, w_correct, w_bits
+    return k, w_base, w_bits
 
 
 # ---------------------------------------------------------------------------
@@ -147,82 +154,94 @@ def load_sample(data_path, sample_idx):
 # Main volume computation (parallel over directions)
 # ---------------------------------------------------------------------------
 
-def run_volumes(A_correct, b_correct, polytopes_dict, bounds, n_directions, n_workers):
+def run_volumes(A_base, b_base, polytopes_dict, bounds, n_directions, n_workers):
     """
-    Estimate the mean width of the correct polytope and all b-approximated
-    polytopes, parallelizing over the N random directions.
+    Estimate the mean width of A_base and, per bit-width, of A_correct and
+    A_both, parallelizing over the N random directions.
 
     Parameters
     ----------
-    A_correct, b_correct : correct polytope (model-only, Ax + b <= 0)
-    polytopes_dict : {bits: (A_both, b_both)}
+    A_base, b_base : model-only polytope (Ax + b <= 0)
+    polytopes_dict : {bits: (A_correct, b_correct, A_both, b_both)}
     bounds : list of (lo, hi) pairs
     n_directions : int
     n_workers : int
 
     Returns
     -------
-    dict with "width_correct", "n_directions_used",
-    "widths_both": {bits: float}
+    dict with "width_base", "widths_correct", "widths_both", "n_directions_used"
     """
 
     def to_numpy(t):
         return t.detach().cpu().numpy() if hasattr(t, "detach") else np.asarray(t)
 
     from src.optim.compute_volumes import _prep_lp
-    A_np, b_ub_correct = _prep_lp(to_numpy(A_correct), to_numpy(b_correct))
+    A_base_np, b_base_np = _prep_lp(to_numpy(A_base), to_numpy(b_base))
 
     polytopes_np = {
-        bits: _prep_lp(to_numpy(A_b), to_numpy(b_b))
-        for bits, (A_b, b_b) in polytopes_dict.items()
+        bits: (
+            _prep_lp(to_numpy(A_c), to_numpy(b_c)) +
+            _prep_lp(to_numpy(A_b), to_numpy(b_b))
+        )
+        for bits, (A_c, b_c, A_b, b_b) in polytopes_dict.items()
     }
+    # polytopes_np[bits] = (A_c_np, b_c_np, A_b_np, b_b_np)
 
     # Sample all directions in the main process (no randomness in workers)
-    d = A_np.shape[1]
+    d = A_base_np.shape[1]
     directions = np.random.randn(n_directions, d)
     directions /= np.linalg.norm(directions, axis=1, keepdims=True)
 
-    widths_correct = {}
-    widths_bits    = {bits: {} for bits in polytopes_np}
+    widths_base    = {}
+    widths_correct = {bits: {} for bits in polytopes_np}
+    widths_both    = {bits: {} for bits in polytopes_np}
     n_failed = 0
 
     t0 = time.perf_counter()
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_worker,
-        initargs=(A_np, b_ub_correct, polytopes_np, directions, bounds),
+        initargs=(A_base_np, b_base_np, polytopes_np, directions, bounds),
     ) as executor:
-        for k, w_correct, w_bits in tqdm(
+        for k, w_base, w_bits in tqdm(
             executor.map(_run_direction, list(range(n_directions))),
             total=n_directions,
             desc="Directions",
         ):
-            if w_correct is None:
+            if w_base is None:
                 n_failed += 1
                 continue
-            widths_correct[k] = w_correct
-            for bits, w in w_bits.items():
-                widths_bits[bits][k] = w
+            widths_base[k] = w_base
+            for bits, val in w_bits.items():
+                if val is not None:
+                    w_c, w_b = val
+                    widths_correct[bits][k] = w_c
+                    widths_both[bits][k]    = w_b
 
     elapsed = time.perf_counter() - t0
     log.info(f"Elapsed: {elapsed:.1f}s  |  Failed directions: {n_failed}/{n_directions}")
 
-    valid_keys    = sorted(widths_correct.keys())
-    n_used        = len(valid_keys)
-    width_correct = float(np.mean([widths_correct[k] for k in valid_keys]))
+    valid_keys = sorted(widths_base.keys())
+    n_used     = len(valid_keys)
+    width_base = float(np.mean([widths_base[k] for k in valid_keys]))
+    log.info(f"  width_base={width_base:.4f}")
 
-    widths_both = {}
+    out_correct = {}
+    out_both    = {}
     for bits in polytopes_np:
-        arr = np.array([widths_bits[bits][k] for k in valid_keys])
-        widths_both[bits] = float(arr.mean())
-        log.info(f"  bits={bits:2d}  width_both={widths_both[bits]:.4f}")
-
-    log.info(f"  width_correct={width_correct:.4f}")
+        wc_vals = [widths_correct[bits][k] for k in valid_keys if k in widths_correct[bits]]
+        wb_vals = [widths_both[bits][k]    for k in valid_keys if k in widths_both[bits]]
+        wc = float(np.mean(wc_vals)) if wc_vals else 0.0
+        wb = float(np.mean(wb_vals)) if wb_vals else 0.0
+        out_correct[bits] = wc
+        out_both[bits]    = wb
+        log.info(f"  bits={bits:2d}  width_correct={wc:.4f}  width_both={wb:.4f}")
 
     return {
-        "width_correct":     width_correct,
+        "width_base":        width_base,
+        "widths_correct":    out_correct,
+        "widths_both":       out_both,
         "n_directions_used": n_used,
-        "widths_both":       widths_both,
     }
 
 
@@ -306,18 +325,18 @@ def main():
         qmodel.eval()
         qmodels_dict[bits] = qmodel
 
-    # Model shortcuts computed once; one b-approximated polytope per bit-width
+    # Model shortcuts computed once; one (A_correct, A_both) pair per bit-width
     if args.model_type == "cnn":
-        A_correct, b_correct, polytopes_dict = build_cnn_all_polytopes(
+        A_base, b_base, polytopes_dict = build_cnn_all_polytopes(
             model, qmodels_dict, x_batch, c
         )
     else:
-        A_correct, b_correct, polytopes_dict = build_all_polytopes(
+        A_base, b_base, polytopes_dict = build_all_polytopes(
             model, qmodels_dict, x_batch, c
         )
-    log.info(f"A_correct (model-only): {tuple(A_correct.shape)}")
-    for bits, (A_both, _) in polytopes_dict.items():
-        log.info(f"A_both (bits={bits:2d}): {tuple(A_both.shape)}")
+    log.info(f"A_base (model-only): {tuple(A_base.shape)}")
+    for bits, (A_correct, _, A_both, _) in polytopes_dict.items():
+        log.info(f"  bits={bits:2d}  A_correct={tuple(A_correct.shape)}  A_both={tuple(A_both.shape)}")
 
     log.info(f"Polytopes built in {time.perf_counter() - t0:.2f}s")
 
@@ -325,7 +344,7 @@ def main():
 
     # Run experiment
     log.info("\nRunning volume experiment...")
-    result = run_volumes(A_correct, b_correct, polytopes_dict, bounds,
+    result = run_volumes(A_base, b_base, polytopes_dict, bounds,
                          args.n_directions, args.n_workers)
 
     # Save
@@ -337,7 +356,8 @@ def main():
         "n_directions":      args.n_directions,
         "n_directions_used": result["n_directions_used"],
         "bits_grid":         BITS_GRID,
-        "width_correct":     result["width_correct"],
+        "width_base":        result["width_base"],
+        "widths_correct":    {str(k): v for k, v in result["widths_correct"].items()},
         "widths_both":       {str(k): v for k, v in result["widths_both"].items()},
     }
     with open(output_file, "w") as f:

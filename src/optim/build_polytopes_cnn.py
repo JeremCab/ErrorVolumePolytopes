@@ -454,11 +454,23 @@ def build_cnn_all_polytopes(
     to_seq_fn=None,
 ) -> tuple[torch.Tensor, torch.Tensor, dict]:
     """
-    Build the correct polytope and one b-approximated polytope per quantized
-    model, computing model shortcuts only once.
+    Build three nested polytopes per quantized model in a single pass,
+    computing model shortcuts only once.
 
-    Avoids recomputing model constraints for each bit-width (same design
-    as build_all_polytopes in build_polytopes.py).
+    Three polytopes per bit-width, with the containment chain
+    A_base ⊇ A_correct ⊇ A_both:
+
+    A_base (model-only reference, shared across all bit-widths):
+        model activation + model classification
+
+    A_correct (per bit-width):
+        model activation + model classification + qmodel activation
+        = A_base + qmodel activation
+
+    A_both (per bit-width):
+        model activation + model classification + qmodel activation
+        + qmodel classification
+        = A_correct + qmodel classification  (differ by exactly 9 constraints)
 
     Convention: Ax + b <= 0
 
@@ -472,11 +484,9 @@ def build_cnn_all_polytopes(
 
     Returns
     -------
-    A_correct : torch.Tensor  (n_constraints_correct, input_flat_dim)
-    b_correct : torch.Tensor  (n_constraints_correct,)
-    polytopes_dict : dict {bits: (A_both, b_both)}
-        Each A_both includes: model activation + qmodel activation
-                            + model classification + qmodel classification.
+    A_base : torch.Tensor  (n_base, input_flat_dim)
+    b_base : torch.Tensor  (n_base,)
+    polytopes_dict : dict {bits: (A_correct, b_correct, A_both, b_both)}
     """
     if to_seq_fn is None:
         to_seq_fn = model_to_sequential
@@ -490,9 +500,10 @@ def build_cnn_all_polytopes(
     with torch.no_grad():
         msg_model = _collect(seq_model, msg_model, cst_model)
 
-    A_correct, b_correct = _constraints_to_Ab(cst_model, msg_model.s_weight, msg_model.s_bias, c)
+    # A_base: model-only (independent of quantization)
+    A_base, b_base = _constraints_to_Ab(cst_model, msg_model.s_weight, msg_model.s_bias, c)
 
-    # --- One b-approximated polytope per bit-width ---
+    # --- One pair (A_correct, A_both) per bit-width ---
     polytopes_dict = {}
     for bits, qmodel in qmodels_dict.items():
         seq_q = to_seq_fn(qmodel)
@@ -501,27 +512,20 @@ def build_cnn_all_polytopes(
         with torch.no_grad():
             msg_q = _collect(seq_q, msg_q, cst_q)
 
-        # Combine model + qmodel constraints
-        cst_both = _Constraints(
-            U_weight = cst_model.U_weight + cst_q.U_weight,
-            U_bias   = cst_model.U_bias   + cst_q.U_bias,
-            S_weight = cst_model.S_weight  + cst_q.S_weight,
-            S_bias   = cst_model.S_bias    + cst_q.S_bias,
-        )
+        A_act_q, b_act_q = _activation_constraints_to_Ab(cst_q)
+        A_cls_q, b_cls_q = _class_constraints_to_Ab(msg_q.s_weight, msg_q.s_bias, c)
 
-        # For A_both: model classification constraints come from model shortcuts,
-        # qmodel classification constraints from qmodel shortcuts.
-        # We build them separately and concatenate.
-        A_act, b_act = _activation_constraints_to_Ab(cst_both)
+        # A_correct: A_base + qmodel activation
+        A_correct = torch.cat([A_base, A_act_q], dim=0)
+        b_correct = torch.cat([b_base, b_act_q], dim=0)
 
-        A_cls_m, b_cls_m = _class_constraints_to_Ab(msg_model.s_weight, msg_model.s_bias, c)
-        A_cls_q, b_cls_q = _class_constraints_to_Ab(msg_q.s_weight,     msg_q.s_bias,     c)
+        # A_both: A_correct + qmodel classification (differ by 9 constraints)
+        A_both = torch.cat([A_correct, A_cls_q], dim=0)
+        b_both = torch.cat([b_correct, b_cls_q], dim=0)
 
-        A_both = torch.cat([A_act, A_cls_m, A_cls_q], dim=0)
-        b_both = torch.cat([b_act, b_cls_m, b_cls_q], dim=0)
-        polytopes_dict[bits] = (A_both, b_both)
+        polytopes_dict[bits] = (A_correct, b_correct, A_both, b_both)
 
-    return A_correct, b_correct, polytopes_dict
+    return A_base, b_base, polytopes_dict
 
 
 def _activation_constraints_to_Ab(
@@ -560,7 +564,7 @@ def _class_constraints_to_Ab(
 
 
 # =========================================================================== #
-# Example usage: run from project root:                                        #
+# Example usage: run from project root:                                       #
 # >>> python -m src.optim.build_polytopes_cnn                                 #
 # =========================================================================== #
 
@@ -636,9 +640,11 @@ if __name__ == "__main__":
     )
     print(f"A_base shape (from build_cnn_all_polytopes) : {tuple(A_base.shape)}")
 
-    for bits, (A_both, b_both) in polytopes_dict.items():
-        in_both = check_polytope_membership(A_both, b_both, x_vec)
-        print(f"  bits={bits:2d}  A_both shape={tuple(A_both.shape)}"
-              f"  x_0 in both polytope: {in_both.item()}")
+    for bits, (A_correct2, b_correct2, A_both, b_both) in polytopes_dict.items():
+        in_correct2 = check_polytope_membership(A_correct2, b_correct2, x_vec)
+        in_both     = check_polytope_membership(A_both,     b_both,     x_vec)
+        print(f"  bits={bits:2d}  A_correct={tuple(A_correct2.shape)}"
+              f"  A_both={tuple(A_both.shape)}"
+              f"  in_correct={in_correct2.item()}  in_both={in_both.item()}")
 
     print("\nDone.")
