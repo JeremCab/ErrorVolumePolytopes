@@ -28,4 +28,5 @@ data/FashionMNIST/
 
 # Results
 results/convergence_mlp/
+results/convergence_cnn/
 results/volumes_mlp/
