@@ -6,9 +6,11 @@
   "bits": 4,
   "max_tries": 200,
   "n_samples": 56680,
-  "n_processed": 5,
-  "n_failed": 0,
-  "success_rate": 1.0,
-  "elapsed_s": 1.0,
-  "failed_indices": []
+  "n_processed": 2000,
+  "n_failed": 1,
+  "success_rate": 0.9995,
+  "elapsed_s": 57.1,
+  "failed_indices": [
+    38
+  ]
 }
