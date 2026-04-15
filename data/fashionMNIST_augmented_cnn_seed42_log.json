@@ -1,0 +1,14 @@
+{
+  "seed": 42,
+  "model_type": "cnn",
+  "model_path": "checkpoints/fashion_cnn_best.pth",
+  "data_path": "data/fashionMNIST_correct_cnn.pt",
+  "bits": 4,
+  "max_tries": 200,
+  "n_samples": 59297,
+  "n_processed": 5,
+  "n_failed": 0,
+  "success_rate": 1.0,
+  "elapsed_s": 5.7,
+  "failed_indices": []
+}
