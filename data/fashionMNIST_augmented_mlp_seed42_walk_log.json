@@ -1,0 +1,23 @@
+{
+  "seed": 42,
+  "model_type": "mlp",
+  "model_path": "checkpoints/fashion_mlp_best.pth",
+  "data_path": "data/fashionMNIST_correct_mlp.pt",
+  "bits": 4,
+  "max_tries": 200,
+  "nb_aug_points": 500,
+  "max_steps": 50000,
+  "nb_diverse": 100,
+  "strategy": "walk",
+  "n_samples": 56680,
+  "n_processed": 1,
+  "n_augmented": 100,
+  "elapsed_s": 7.1,
+  "reps_per_sample": [
+    100
+  ],
+  "avg_reps_per_sample": 100.0,
+  "max_reps_per_sample": 100,
+  "n_zero_reps": 0,
+  "zero_rep_indices": []
+}
