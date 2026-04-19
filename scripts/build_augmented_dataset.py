@@ -43,7 +43,10 @@ from src.models.networks           import FashionMLP_Large, FashionCNN_Small
 from src.quantization.quantize     import quantize_model
 from src.optim.build_polytopes     import build_all_polytopes
 from src.optim.build_polytopes_cnn import build_cnn_all_polytopes
-from src.optim.mcmc_augment        import find_augmented_point
+from src.optim.mcmc_augment        import (find_augmented_point,
+                                            find_augmented_point_margin,
+                                            find_augmented_points_walk,
+                                            select_diverse_representatives)
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger(__name__)
@@ -86,11 +89,26 @@ def main():
     parser.add_argument("--bits",       type=int, default=4,
                         help="Bit-width of q-model used to search for x' (default: 4)")
     parser.add_argument("--max_tries",  type=int, default=200,
-                        help="MCMC attempts per sample before falling back (default: 200)")
+                        help="MCMC attempts per sample before falling back — strategies A and B (default: 200)")
+    parser.add_argument("--nb_aug_points", type=int, default=100,
+                        help="Target number of new representatives per original point — strategy C / walk (default: 100)")
+    parser.add_argument("--max_steps",  type=int, default=5000,
+                        help="Hard cap on walk steps per sample — strategy C / walk (default: 5000)")
+    parser.add_argument("--nb_diverse",  type=int, default=None,
+                        help="After the walk, apply greedy farthest-point diversity selection and keep "
+                             "only nb_diverse representatives per original point. "
+                             "None = no selection, keep all found (default: None).")
     parser.add_argument("--seed",       type=int, default=42,
                         help="RNG seed — change to generate a different augmented dataset")
     parser.add_argument("--n_samples",  type=int, default=None,
                         help="Process only the first N samples (default: all). Use for smoke tests.")
+    parser.add_argument("--strategy",  type=str, default="activation",
+                        choices=["activation", "margin", "walk"],
+                        help="Augmentation strategy: "
+                             "'activation' (Strategy A — first x' with different q-model activation pattern), "
+                             "'margin'     (Strategy B — x' minimising q-model classification margin), "
+                             "'walk'       (Strategy C — full MCMC walk, nb_aug_points representatives per sample). "
+                             "Default: activation.")
     args = parser.parse_args()
 
     # Fill path defaults
@@ -102,7 +120,8 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    stem       = f"fashionMNIST_augmented_{args.model_type}_seed{args.seed}"
+    strategy_suffix = "" if args.strategy == "activation" else f"_{args.strategy}"
+    stem       = f"fashionMNIST_augmented_{args.model_type}_seed{args.seed}{strategy_suffix}"
     output_pt  = output_dir / f"{stem}.pt"
     output_log = output_dir / f"{stem}_log.json"
 
@@ -114,7 +133,16 @@ def main():
     log.info(f"  Model path   : {args.model_path}")
     log.info(f"  Data path    : {args.data_path}")
     log.info(f"  Q-model bits : {args.bits}")
-    log.info(f"  Max tries    : {args.max_tries}")
+    log.info(f"  Strategy     : {args.strategy}")
+    if args.strategy == "walk":
+        log.info(f"  Nb aug pts   : {args.nb_aug_points}  (collect target per sample)")
+        log.info(f"  Max steps    : {args.max_steps}   (hard cap)")
+        if args.nb_diverse is not None:
+            log.info(f"  Nb diverse   : {args.nb_diverse}  (kept after greedy farthest-point selection)")
+        else:
+            log.info(f"  Nb diverse   : all  (no diversity selection)")
+    else:
+        log.info(f"  Max tries    : {args.max_tries}")
     log.info(f"  Seed         : {args.seed}")
     log.info(f"  N samples    : {args.n_samples if args.n_samples else 'all'}")
     log.info(f"  Output       : {output_pt}")
@@ -139,7 +167,8 @@ def main():
     # Augmentation loop
     rng            = np.random.default_rng(args.seed)
     augmented      = []       # list of (x', c) — same format as original dataset
-    failed_indices = []       # indices where fallback to original was used
+    failed_indices = []       # indices where fallback to original was used (activation strategy)
+    reps_per_sample = []      # number of representatives per sample (walk strategy)
 
     log.info("\nAugmenting...")
     t_total = time.perf_counter()
@@ -163,48 +192,100 @@ def main():
         A_np = A.detach().cpu().numpy()
         b_np = b.detach().cpu().numpy()
 
-        x_prime = find_augmented_point(
-            x0, A_np, b_np, qmodel,
-            max_tries=args.max_tries,
-            rng=rng,
-        )
+        if args.strategy == "walk":
+            # Strategy C: full MCMC walk — collect nb_aug_points equivalence-class representatives
+            reps = find_augmented_points_walk(
+                x0, A_np, b_np, qmodel,
+                nb_aug_points=args.nb_aug_points,
+                max_steps=args.max_steps,
+                rng=rng,
+            )
+            # Optional greedy farthest-point diversity selection
+            if args.nb_diverse is not None and len(reps) > args.nb_diverse:
+                reps = select_diverse_representatives(reps, x0, k=args.nb_diverse)
+            n_reps = len(reps)
+            reps_per_sample.append(n_reps)
+            if n_reps == 0:
+                failed_indices.append(idx)
+            for rep in reps:
+                # Remove batch dim — same shape as the original x_i
+                augmented.append((rep.squeeze(0), c_i))
 
-        if x_prime is None:
-            failed_indices.append(idx)
-            augmented.append((x_i, c_i))           # fallback: keep original
-        else:
-            # Remove batch dim — same shape as the original x_i
+        elif args.strategy == "margin":
+            # Strategy B: minimise q-model classification margin
+            x_prime = find_augmented_point_margin(
+                x0, A_np, b_np, qmodel, c_i,
+                max_tries=args.max_tries,
+                rng=rng,
+            )
+            # margin strategy always returns a tensor (never None)
             augmented.append((x_prime.squeeze(0).detach().cpu(), c_i))
+
+        else:
+            # Strategy A: accept first x' with different q-model activation pattern
+            x_prime = find_augmented_point(
+                x0, A_np, b_np, qmodel,
+                max_tries=args.max_tries,
+                rng=rng,
+            )
+            if x_prime is None:
+                failed_indices.append(idx)
+                augmented.append((x_i, c_i))       # fallback: keep original
+            else:
+                # Remove batch dim — same shape as the original x_i
+                augmented.append((x_prime.squeeze(0).detach().cpu(), c_i))
 
     elapsed  = time.perf_counter() - t_total
     n_failed = len(failed_indices)
+    n_aug    = len(augmented)
 
     log.info(f"\nFinished in {elapsed:.1f}s  ({elapsed/n:.2f}s/sample)"
              f"  →  full {n_total} samples would take ~{elapsed/n*n_total/60:.0f} min"
              if n < n_total else
              f"\nFinished in {elapsed:.1f}s  ({elapsed/n:.2f}s/sample)")
-    log.info(f"Success rate : {n - n_failed}/{n}  ({100*(n - n_failed)/n:.1f}%)")
-    log.info(f"Fallbacks    : {n_failed}  (original kept)")
+
+    if args.strategy == "walk":
+        avg_reps = np.mean(reps_per_sample) if reps_per_sample else 0.0
+        max_reps = max(reps_per_sample) if reps_per_sample else 0
+        log.info(f"Total augmented points : {n_aug}")
+        log.info(f"Reps/sample  avg={avg_reps:.2f}  max={max_reps}")
+        log.info(f"Samples with 0 reps    : {n_failed}/{n}  ({100*n_failed/n:.1f}%)")
+    else:
+        log.info(f"Success rate : {n - n_failed}/{n}  ({100*(n - n_failed)/n:.1f}%)")
+        log.info(f"Fallbacks    : {n_failed}  (original kept)")
 
     # Save augmented dataset (same format as input — list of (x, c) tuples)
     torch.save(augmented, output_pt)
-    log.info(f"\nSaved dataset : {output_pt}")
+    log.info(f"\nSaved dataset : {output_pt}  ({n_aug} points)")
 
-    # Save log with seed and failed indices
-    log_data = {
+    # Save log with seed and indices/counts
+    log_data: dict = {
         "seed":           args.seed,
         "model_type":     args.model_type,
         "model_path":     args.model_path,
         "data_path":      args.data_path,
         "bits":           args.bits,
         "max_tries":      args.max_tries,
+        "nb_aug_points":  args.nb_aug_points,
+        "max_steps":      args.max_steps,
+        "nb_diverse":     args.nb_diverse,
+        "strategy":       args.strategy,
         "n_samples":      n_total,
         "n_processed":    n,
-        "n_failed":       n_failed,
-        "success_rate":   round((n - n_failed) / n, 4),
+        "n_augmented":    n_aug,
         "elapsed_s":      round(elapsed, 1),
-        "failed_indices": failed_indices,
     }
+    if args.strategy == "walk":
+        log_data["reps_per_sample"]     = reps_per_sample
+        log_data["avg_reps_per_sample"] = round(float(np.mean(reps_per_sample)), 4) if reps_per_sample else 0.0
+        log_data["max_reps_per_sample"] = int(max(reps_per_sample)) if reps_per_sample else 0
+        log_data["n_zero_reps"]         = n_failed
+        log_data["zero_rep_indices"]    = failed_indices
+    else:
+        log_data["n_failed"]       = n_failed
+        log_data["success_rate"]   = round((n - n_failed) / n, 4)
+        log_data["failed_indices"] = failed_indices
+
     with open(output_log, "w") as f:
         json.dump(log_data, f, indent=2)
     log.info(f"Saved log     : {output_log}")

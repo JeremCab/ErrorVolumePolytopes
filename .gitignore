@@ -32,3 +32,4 @@ results/convergence_cnn/
 results/volumes_mlp/
 results/volumes_cnn/
 results/volumes_mlp_old/
+results/volumes_mlp_aug/
