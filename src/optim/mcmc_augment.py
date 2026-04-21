@@ -140,6 +140,8 @@ def find_augmented_point(
     qmodel: nn.Module,
     max_tries: int = 200,
     rng: np.random.Generator | None = None,
+    pixel_lo: float = -1.0,
+    pixel_hi: float =  1.0,
 ) -> torch.Tensor | None:
     """
     Hit-and-run MCMC: find x' inside Polytope #1 where qmodel has a
@@ -149,7 +151,8 @@ def find_augmented_point(
       1. Sample a random unit direction d.
       2. Compute the chord [t_min, t_max] inside the polytope analytically.
       3. Sample t ~ Uniform(t_min, t_max) and set x' = x0 + t*d.
-      4. Accept x' if its qmodel activation pattern differs from x0's.
+      4. Clip x' to [pixel_lo, pixel_hi]^n  (projected hit-and-run).
+      5. Accept x' if its qmodel activation pattern differs from x0's.
 
     Parameters
     ----------
@@ -159,6 +162,8 @@ def find_augmented_point(
     qmodel   : nn.Module         — quantized model (eval mode recommended)
     max_tries: int               — number of attempts before returning None
     rng      : numpy Generator   — for reproducibility; defaults to new RNG
+    pixel_lo : float             — lower pixel bound after clipping (default −1)
+    pixel_hi : float             — upper pixel bound after clipping (default +1)
 
     Returns
     -------
@@ -183,9 +188,9 @@ def find_augmented_point(
         if not (np.isfinite(t_min) and np.isfinite(t_max) and t_min < t_max):
             continue
 
-        # --- sample a point on the chord ---
+        # --- sample a point on the chord, then project onto pixel box ---
         t = rng.uniform(t_min, t_max)
-        x_prime_flat = x0_flat + t * d
+        x_prime_flat = np.clip(x0_flat + t * d, pixel_lo, pixel_hi)
 
         # --- check activation pattern ---
         x_prime = torch.tensor(
@@ -232,6 +237,8 @@ def find_augmented_point_margin(
     c: int,
     max_tries: int = 200,
     rng: np.random.Generator | None = None,
+    pixel_lo: float = -1.0,
+    pixel_hi: float =  1.0,
 ) -> torch.Tensor:
     """
     Hit-and-run augmentation that targets the q-model's classification
@@ -261,6 +268,8 @@ def find_augmented_point_margin(
     c        : int               — correct class index
     max_tries: int               — number of random directions to try
     rng      : numpy Generator   — for reproducibility; defaults to new RNG
+    pixel_lo : float             — lower pixel bound after clipping (default −1)
+    pixel_hi : float             — upper pixel bound after clipping (default +1)
 
     Returns
     -------
@@ -291,7 +300,8 @@ def find_augmented_point_margin(
         eps_t = 1e-4 * (t_max - t_min)
 
         for t in (t_min + eps_t, t_max - eps_t):
-            x_cand_flat = x0_flat + t * d
+            # project onto pixel box (projected hit-and-run)
+            x_cand_flat = np.clip(x0_flat + t * d, pixel_lo, pixel_hi)
             x_cand = torch.tensor(
                 x_cand_flat.reshape(x0.shape),
                 dtype=x0.dtype,
@@ -321,23 +331,40 @@ def find_augmented_points_walk(
     nb_aug_points: int = 10,
     max_steps: int = 2000,
     rng: np.random.Generator | None = None,
+    pixel_lo: float = -1.0,
+    pixel_hi: float =  1.0,
+    mode: str = "projected",
+    p1_filter_tol: float | None = None,
 ) -> list[torch.Tensor]:
     """
     Full hit-and-run MCMC walk inside Polytope #1.
 
-    Implements the algorithm of Šíma & Cabessa (ICONIP 2026), Section 3:
+    Two modes are available, selected via the `mode` parameter:
 
-        x_k = x_{k-1} + λ_k u_k,   k = 1, 2, ...
+    mode = "projected"  (default — practical, pixel-safe)
+        Classical hit-and-run inside A (P1 constraints only), then the step
+        is clipped onto [pixel_lo, pixel_hi]^n:
 
-    where u_k is a random unit direction and λ_k is sampled uniformly on
-    the chord [t_min, t_max] inside P1 from x_{k-1}.  The chain ALWAYS
-    moves (every step is accepted — uniform sampling on the chord gives
-    a uniform distribution over P1 asymptotically).
+            x_k = clip( x_{k-1} + λ_k u_k, pixel_lo, pixel_hi )
 
-    The walk continues until nb_aug_points new equivalence-class
-    representatives are found, or max_steps steps are exhausted (whichever
-    comes first).  One representative is kept per distinct q-model activation
-    pattern Ã(x_k), excluding x0's own class (x0 is already in dataset T).
+        The clip ("projected hit-and-run") is necessary because real images
+        have many pixels at exactly ±1 after normalisation; adding pixel-
+        bound rows to A collapses all chords to length 0 for such starting
+        points.  The projected point may slightly violate A, but this is
+        absorbed by the 1e-6 tolerance in chord_interval.
+        Walk mixes freely — diverse augmented points.
+
+    mode = "pixel_bounds"  (paper-exact, degenerate for real images)
+        Pixel-bound constraints (±x_j ≤ 1, i.e. x_j ∈ [pixel_lo, pixel_hi])
+        are added as explicit rows to A before every chord computation.
+        This is exactly the polytope Ξ̄_x from the paper (eqs. 9–10, 12).
+        For real images with pixels at exactly ±1, the starting point sits on
+        ~355 faces of the box simultaneously → every chord has length ≈ 0 →
+        walk is stuck at x0 → all augmented points ≈ x0.
+
+    In both modes the chain ALWAYS moves (every step accepted). One
+    representative is kept per distinct q-model activation pattern Ã(x_k),
+    excluding x0's own pattern.
 
     Parameters
     ----------
@@ -346,19 +373,29 @@ def find_augmented_points_walk(
     b             : (m,) array     — P1 constraint RHS
     qmodel        : nn.Module      — quantized model (eval mode recommended)
     nb_aug_points : int            — target number of new representatives
-                                     (walk stops early when this is reached)
-    max_steps     : int            — hard cap on walk steps (prevents infinite
-                                     loops when P1 has fewer than nb_aug_points
-                                     distinct linear regions)
+    max_steps     : int            — hard cap on walk steps
     rng           : numpy Generator — for reproducibility; defaults to new RNG
+    pixel_lo      : float          — lower pixel bound (default −1)
+    pixel_hi      : float          — upper pixel bound (default +1)
+    mode          : str            — "projected" (default) or "pixel_bounds"
+    p1_filter_tol : float | None   — if not None, drop representatives that
+                                     violate any P1 constraint by more than
+                                     this tolerance (max(A·x + b) > tol).
+                                     Only meaningful for mode="projected", where
+                                     clipping may slightly violate A.
+                                     Pixel bounds are always satisfied by
+                                     construction in projected mode (via clip).
+                                     Default: None (no filtering).
 
     Returns
     -------
     representatives : list of torch.Tensor
-        One representative per new equivalence class found (Ã differs from
-        x0's class and pairwise distinct).  Same shape as x0.
+        One representative per new equivalence class found.  Same shape as x0.
         len(representatives) <= nb_aug_points.  May be empty.
+        If p1_filter_tol is set, only strict P1 members are returned.
     """
+    if mode not in ("projected", "pixel_bounds"):
+        raise ValueError(f"mode must be 'projected' or 'pixel_bounds', got {mode!r}")
     if rng is None:
         rng = np.random.default_rng()
 
@@ -366,6 +403,15 @@ def find_augmented_points_walk(
 
     x0_flat = x0.detach().cpu().numpy().flatten()   # (n,)
     n = x0_flat.shape[0]
+
+    # In pixel_bounds mode, append box constraints once (they are fixed)
+    if mode == "pixel_bounds":
+        I = np.eye(n, dtype=A.dtype)
+        A_walk = np.vstack([A,  I, -I])
+        b_walk = np.concatenate([b, -np.full(n, pixel_hi), np.full(n, pixel_lo)])
+    else:
+        A_walk = A
+        b_walk = b
 
     ref_pattern_tuple: tuple = tuple(activation_pattern(x0, qmodel))
     seen_patterns: set[tuple] = {ref_pattern_tuple}
@@ -381,14 +427,19 @@ def find_augmented_points_walk(
             continue
         d /= norm
 
-        # --- chord inside P1 from current position ---
-        t_min, t_max = chord_interval(x_cur_flat, A, b, d)
+        # --- chord inside walk polytope from current position ---
+        t_min, t_max = chord_interval(x_cur_flat, A_walk, b_walk, d)
         if not (np.isfinite(t_min) and np.isfinite(t_max) and t_min < t_max):
             continue
 
-        # --- uniform sample on chord — always move (true MCMC step) ---
+        # --- uniform sample on chord ---
         t = rng.uniform(t_min, t_max)
         x_next_flat = x_cur_flat + t * d
+
+        # In projected mode: clip onto pixel box after the step
+        if mode == "projected":
+            x_next_flat = np.clip(x_next_flat, pixel_lo, pixel_hi)
+
         x_next = torch.tensor(
             x_next_flat.reshape(x0.shape),
             dtype=x0.dtype,
@@ -405,6 +456,18 @@ def find_augmented_points_walk(
             representatives.append(x_next.detach().cpu())
             if len(representatives) >= nb_aug_points:
                 break   # target reached — stop early
+
+    # Optional post-walk filter: keep only strict P1 members.
+    # Pixel bounds are satisfied by construction in projected mode (via clip),
+    # so only the A·x + b ≤ 0 constraints need to be checked here.
+    if p1_filter_tol is not None:
+        filtered = []
+        for rep in representatives:
+            rep_flat = rep.detach().cpu().numpy().flatten()
+            max_violation = float((A @ rep_flat + b).max())
+            if max_violation <= p1_filter_tol:
+                filtered.append(rep)
+        representatives = filtered
 
     return representatives
 

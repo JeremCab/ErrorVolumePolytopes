@@ -1,0 +1,33 @@
+{
+  "model_type": "mlp",
+  "sample_idx": 38,
+  "model_path": "/lustre/fswork/projects/rech/aik/uhr51mx/ErrorVolumePolytopes/checkpoints/fashion_mlp_best.pth",
+  "data_path": "/lustre/fswork/projects/rech/aik/uhr51mx/ErrorVolumePolytopes/data/fashionMNIST_augmented_mlp_seed42_walk_1point.pt",
+  "n_directions": 200,
+  "n_directions_used": 200,
+  "bits_grid": [
+    4,
+    6,
+    8,
+    10,
+    12,
+    16
+  ],
+  "width_base": 39.694275781439146,
+  "widths_correct": {
+    "4": 37.37841958667666,
+    "6": 39.303228658644834,
+    "8": 39.59913951598986,
+    "10": 39.67446150676811,
+    "12": 39.68839498649755,
+    "16": 39.69395284502387
+  },
+  "widths_both": {
+    "4": 37.37841958668195,
+    "6": 39.303228658643604,
+    "8": 39.599139516001216,
+    "10": 39.67446150677068,
+    "12": 39.68839498655587,
+    "16": 39.69395284503328
+  }
+}

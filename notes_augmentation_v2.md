@@ -95,3 +95,57 @@ Start with **Strategy B** (chord-endpoint greedy): it requires minimal code chan
 extra LP calls, and directly searches for q-model uncertainty.  If the resulting GACC
 curves are still flat, escalate to **Strategy A** (LP margin minimisation) which is the
 theoretically optimal approach.
+
+---
+
+## Conclusion — Why V3/V2 ≈ 1 is structural and unavoidable for accurate models
+
+### The argument
+
+Let x' be any point inside Polytope #1 (Ξ̄_x) where the q-model classifies correctly.
+
+1. **x' belongs to some activation region.**  Since the q-model is piecewise-linear,
+   the input space is partitioned into activation regions.  x' lies in one such region;
+   call the corresponding polytope P'2 (= Ξ_{x'}, built from x' as the reference point).
+
+2. **Within P'2, the q-model is affine.**  In that linear region the q-model computes a
+   fixed affine function of the input.  In particular, the classification margin
+   `q_c(·) − max_{k≠c} q_k(·)` is an affine function of the input within P'2.
+
+3. **If the q-model classifies correctly at x', it classifies correctly everywhere in P'2.**
+   An affine function that is positive at x' (the interior of P'2) is either positive
+   throughout P'2, or the zero-set (the classification boundary) passes through P'2.
+   For a well-trained q-model, the margin at x' is strictly positive, so the boundary
+   does not enter P'2 → P'3 = P'2 → V3(x')/V2(x') = 1.
+
+4. **This holds for every x' inside P1, regardless of its activation region.**
+   Picking x' in a different activation region from x₀ (which is what MCMC augmentation
+   does) does not help: it changes P'2 but the same argument applies to the new region.
+
+### Consequence for augmentation
+
+**No MCMC strategy that selects x' inside P1 based on activation-pattern diversity alone
+can produce V3(x')/V2(x') < 1.**  The non-trivial ratio is V2(x')/V1, which measures
+what fraction of P1 the q-model's activation region at x' occupies.
+
+The only augmentation strategies that can break V3/V2 < 1 are:
+
+- **LP margin minimisation (Strategy A):** explicitly minimises the classification margin,
+  placing x' near the classification boundary → boundary cuts into P'2 → V3 < V2.
+- **Chord-endpoint greedy search (Strategy B):** samples x' at the P1 boundary in
+  directions most likely to approach the classification boundary — a heuristic version
+  of Strategy A without extra LP calls.
+
+Even these strategies are limited by the accuracy of the q-model: for a high-accuracy
+q-model (say ≥99% on the test set), most points in P1 will be far from any
+classification boundary, so the achievable V3/V2 reduction is typically small.
+
+### Summary table
+
+| Augmentation mode | V3(x')/V2(x') | Notes |
+|---|---|---|
+| MCMC walk (activation diversity) | ≈ 1.0 | Structural, unavoidable |
+| Projected MCMC walk (any mode) | ≈ 1.0 | Same argument; pixel bounds irrelevant |
+| LP margin minimisation (Strategy A) | < 1.0 possible | Only if q-model is near classification boundary |
+| Chord-endpoint greedy (Strategy B) | < 1.0 possible | Heuristic approximation of Strategy A |
+| Adversarial examples inside P1 | ≪ 1.0 (V3 = 0) | Exact misclassification; V3 is empty |

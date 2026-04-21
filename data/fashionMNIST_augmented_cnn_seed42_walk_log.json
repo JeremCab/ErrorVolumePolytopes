@@ -1,8 +1,8 @@
 {
   "seed": 42,
-  "model_type": "mlp",
-  "model_path": "checkpoints/fashion_mlp_best.pth",
-  "data_path": "data/fashionMNIST_correct_mlp.pt",
+  "model_type": "cnn",
+  "model_path": "checkpoints/fashion_cnn_best.pth",
+  "data_path": "data/fashionMNIST_correct_cnn.pt",
   "bits": 4,
   "max_tries": 200,
   "nb_aug_points": 200,
@@ -11,10 +11,10 @@
   "strategy": "walk",
   "walk_mode": "projected",
   "p1_filter_tol": 0.0001,
-  "n_samples": 56680,
+  "n_samples": 59297,
   "n_processed": 1,
   "n_augmented": 50,
-  "elapsed_s": 3.4,
+  "elapsed_s": 10.2,
   "reps_per_sample": [
     50
   ],

@@ -109,6 +109,20 @@ def main():
                              "'margin'     (Strategy B — x' minimising q-model classification margin), "
                              "'walk'       (Strategy C — full MCMC walk, nb_aug_points representatives per sample). "
                              "Default: activation.")
+    parser.add_argument("--p1_filter_tol", type=float, default=None,
+                        help="If set, drop walk representatives that violate any P1 constraint "
+                             "by more than this tolerance (max(A·x+b) > tol). "
+                             "Only meaningful for --walk_mode projected. "
+                             "Default: None (keep all).")
+    parser.add_argument("--walk_mode", type=str, default="projected",
+                        choices=["projected", "pixel_bounds"],
+                        help="Walk mode for strategy C: "
+                             "'projected'    — hit-and-run inside P1, then clip to [-1,+1] (default). "
+                             "                 Walk mixes freely; all augmented points are valid images. "
+                             "'pixel_bounds' — pixel-bound constraints added as explicit rows to P1 "
+                             "                 (paper-exact Ξ̄_x). For real images the walk gets stuck "
+                             "                 (zero-length chords) because x0 sits on the pixel-box "
+                             "                 boundary; use this mode to demonstrate the degeneracy.")
     args = parser.parse_args()
 
     # Fill path defaults
@@ -120,8 +134,9 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    mode_suffix = f"_{args.walk_mode}" if args.strategy == "walk" and args.walk_mode != "projected" else ""
     strategy_suffix = "" if args.strategy == "activation" else f"_{args.strategy}"
-    stem       = f"fashionMNIST_augmented_{args.model_type}_seed{args.seed}{strategy_suffix}"
+    stem       = f"fashionMNIST_augmented_{args.model_type}_seed{args.seed}{strategy_suffix}{mode_suffix}"
     output_pt  = output_dir / f"{stem}.pt"
     output_log = output_dir / f"{stem}_log.json"
 
@@ -135,12 +150,17 @@ def main():
     log.info(f"  Q-model bits : {args.bits}")
     log.info(f"  Strategy     : {args.strategy}")
     if args.strategy == "walk":
+        log.info(f"  Walk mode    : {args.walk_mode}")
         log.info(f"  Nb aug pts   : {args.nb_aug_points}  (collect target per sample)")
         log.info(f"  Max steps    : {args.max_steps}   (hard cap)")
         if args.nb_diverse is not None:
             log.info(f"  Nb diverse   : {args.nb_diverse}  (kept after greedy farthest-point selection)")
         else:
             log.info(f"  Nb diverse   : all  (no diversity selection)")
+        if args.p1_filter_tol is not None:
+            log.info(f"  P1 filter    : tol={args.p1_filter_tol}  (drop reps outside P1)")
+        else:
+            log.info(f"  P1 filter    : off  (keep all reps)")
     else:
         log.info(f"  Max tries    : {args.max_tries}")
     log.info(f"  Seed         : {args.seed}")
@@ -199,6 +219,8 @@ def main():
                 nb_aug_points=args.nb_aug_points,
                 max_steps=args.max_steps,
                 rng=rng,
+                mode=args.walk_mode,
+                p1_filter_tol=args.p1_filter_tol,
             )
             # Optional greedy farthest-point diversity selection
             if args.nb_diverse is not None and len(reps) > args.nb_diverse:
@@ -270,6 +292,8 @@ def main():
         "max_steps":      args.max_steps,
         "nb_diverse":     args.nb_diverse,
         "strategy":       args.strategy,
+        "walk_mode":      args.walk_mode if args.strategy == "walk" else None,
+        "p1_filter_tol":  args.p1_filter_tol if args.strategy == "walk" else None,
         "n_samples":      n_total,
         "n_processed":    n,
         "n_augmented":    n_aug,
