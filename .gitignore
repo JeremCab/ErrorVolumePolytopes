@@ -29,7 +29,11 @@ data/FashionMNIST/
 # Results
 results/convergence_mlp/
 results/convergence_cnn/
+
 results/volumes_mlp/
-results/volumes_cnn/
 results/volumes_mlp_old/
 results/volumes_mlp_aug/
+results/volumes_mlp_walk/
+results/volumes_mlp_walk1point/
+
+results/volumes_cnn/
