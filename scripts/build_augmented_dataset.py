@@ -123,6 +123,10 @@ def main():
                              "                 (paper-exact Ξ̄_x). For real images the walk gets stuck "
                              "                 (zero-length chords) because x0 sits on the pixel-box "
                              "                 boundary; use this mode to demonstrate the degeneracy.")
+    parser.add_argument("--tag", type=str, default="",
+                        help="Optional tag appended to the output filename stem, e.g. 'qcorrect' "
+                             "or 'qincorrect', to avoid overwriting outputs from different input "
+                             "datasets. Default: '' (no tag).")
     args = parser.parse_args()
 
     # Fill path defaults
@@ -136,7 +140,8 @@ def main():
 
     mode_suffix = f"_{args.walk_mode}" if args.strategy == "walk" and args.walk_mode != "projected" else ""
     strategy_suffix = "" if args.strategy == "activation" else f"_{args.strategy}"
-    stem       = f"fashionMNIST_augmented_{args.model_type}_seed{args.seed}{strategy_suffix}{mode_suffix}"
+    tag_suffix  = f"_{args.tag}" if args.tag else ""
+    stem        = f"fashionMNIST_augmented_{args.model_type}_seed{args.seed}{strategy_suffix}{mode_suffix}{tag_suffix}"
     output_pt  = output_dir / f"{stem}.pt"
     output_log = output_dir / f"{stem}_log.json"
 
@@ -292,6 +297,7 @@ def main():
         "max_steps":      args.max_steps,
         "nb_diverse":     args.nb_diverse,
         "strategy":       args.strategy,
+        "tag":            args.tag if args.tag else None,
         "walk_mode":      args.walk_mode if args.strategy == "walk" else None,
         "p1_filter_tol":  args.p1_filter_tol if args.strategy == "walk" else None,
         "n_samples":      n_total,

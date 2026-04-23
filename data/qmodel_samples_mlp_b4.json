@@ -1,0 +1,40 @@
+{
+  "model_type": "mlp",
+  "model_path": "checkpoints/fashion_mlp_best.pth",
+  "data_path": "data/fashionMNIST_correct_mlp.pt",
+  "bits": 4,
+  "seed": 42,
+  "n_total": 56680,
+  "n_qcorrect_total": 55881,
+  "n_qincorrect_total": 799,
+  "qmodel_accuracy": 0.985903,
+  "nb_points_requested": 10,
+  "n_qcorrect_saved": 10,
+  "n_qincorrect_saved": 10,
+  "qcorrect_indices": [
+    4869,
+    5062,
+    5342,
+    11431,
+    24554,
+    24885,
+    37106,
+    39524,
+    43848,
+    48639
+  ],
+  "qincorrect_indices": [
+    9764,
+    19901,
+    21823,
+    24304,
+    26531,
+    29761,
+    35099,
+    45249,
+    47857,
+    53029
+  ],
+  "output_qcorrect": "data/qmodel_qcorrect_mlp_b4.pt",
+  "output_qincorrect": "data/qmodel_qincorrect_mlp_b4.pt"
+}

@@ -1,0 +1,40 @@
+{
+  "model_type": "cnn",
+  "model_path": "checkpoints/fashion_cnn_best.pth",
+  "data_path": "data/fashionMNIST_correct_cnn.pt",
+  "bits": 4,
+  "seed": 42,
+  "n_total": 59297,
+  "n_qcorrect_total": 55689,
+  "n_qincorrect_total": 3608,
+  "qmodel_accuracy": 0.939154,
+  "nb_points_requested": 10,
+  "n_qcorrect_saved": 10,
+  "n_qincorrect_saved": 10,
+  "qcorrect_indices": [
+    5080,
+    5273,
+    5565,
+    11920,
+    25713,
+    26056,
+    38780,
+    41319,
+    45855,
+    50882
+  ],
+  "qincorrect_indices": [
+    11269,
+    21720,
+    23300,
+    26135,
+    29687,
+    32735,
+    38611,
+    46834,
+    49286,
+    55105
+  ],
+  "output_qcorrect": "data/qmodel_qcorrect_cnn_b4.pt",
+  "output_qincorrect": "data/qmodel_qincorrect_cnn_b4.pt"
+}
