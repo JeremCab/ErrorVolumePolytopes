@@ -237,6 +237,67 @@ def build_all_polytopes(model, qmodels_dict, x, c):
     return A_base, b_base, polytopes_dict
 
 
+def build_all_polytopes_per_class(model, qmodels_dict, x, c):
+    """
+    Like build_all_polytopes, but computes P3(k) for ALL classes k (not just c).
+
+    For each bit-width, returns:
+      - A_correct, b_correct  : P2 (same as build_all_polytopes)
+      - per_class_dict        : {k: (A_k, b_k)} where (A_k, b_k) defines
+                                P3(k) = A_correct + "qmodel predicts k" constraints
+
+    The existing build_all_polytopes function is NOT modified. This function
+    adds new per-class polytopes alongside the original interface.
+
+    Convention: Ax + b <= 0
+
+    Parameters
+    ----------
+    model : torch.nn.Module
+    qmodels_dict : dict {bits (int): qmodel (torch.nn.Module)}
+    x : torch.Tensor of shape (1, input_dim)
+    c : int
+
+    Returns
+    -------
+    A_base : torch.Tensor of shape (n_base, input_dim)
+    b_base : torch.Tensor of shape (n_base,)
+    polytopes_dict : dict {bits: (A_correct, b_correct, per_class_dict)}
+        per_class_dict : dict {k (int): (A_k, b_k)} for k in range(n_classes)
+    """
+    # Model shortcuts — computed ONCE
+    W_l, B_l, m_l = compute_shortcut_weights(model, x)
+    A_act, b_act   = build_base_polytope_from_shortcuts(W_l, B_l, m_l)
+    A_cls, b_cls   = build_class_constraints_from_shortcuts(W_l, B_l, c)
+
+    A_base = torch.cat([A_act, A_cls], dim=0)
+    b_base = torch.cat([b_act, b_cls], dim=0)
+
+    n_classes = W_l[-1].shape[0]
+
+    polytopes_dict = {}
+    for bits, qmodel in qmodels_dict.items():
+        Wq_l, Bq_l, mq_l = compute_shortcut_weights(qmodel, x)
+        A_act_q, b_act_q  = build_base_polytope_from_shortcuts(Wq_l, Bq_l, mq_l)
+
+        # A_correct: A_base + qmodel activation  (same as build_all_polytopes)
+        A_correct = torch.cat([A_base, A_act_q], dim=0)
+        b_correct = torch.cat([b_base, b_act_q], dim=0)
+
+        # P3(k) for each class k: A_correct + "qmodel predicts k" constraints
+        per_class = {}
+        for k in range(n_classes):
+            A_cls_k, b_cls_k = build_class_constraints_from_shortcuts(Wq_l, Bq_l, k)
+            per_class[k] = (
+                torch.cat([A_correct, A_cls_k], dim=0),
+                torch.cat([b_correct, b_cls_k], dim=0),
+            )
+
+        polytopes_dict[bits] = (A_correct, b_correct, per_class)
+
+    return A_base, b_base, polytopes_dict
+
+
 def ensure_vector(x):
     """
     Ensure x has shape (input_dim,)

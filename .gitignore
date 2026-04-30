@@ -41,6 +41,7 @@ results/volumes_cnn_aug/
 results/volumes_cnn_walk1point/
 
 results/volumes_aug_mlp_qcorrect/
-results/volumes_aug_mlp_qinqcorrect/
+results/volumes_aug_mlp_qincorrect/
 results/volumes_aug_cnn_qcorrect/
-results/volumes_aug_cnn_qinqcorrect/
+results/volumes_aug_cnn_qincorrect/
+results/volumes_v3k_mlp_qincorrect/

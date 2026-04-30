@@ -528,6 +528,84 @@ def build_cnn_all_polytopes(
     return A_base, b_base, polytopes_dict
 
 
+def build_cnn_all_polytopes_per_class(
+    model: nn.Module,
+    qmodels_dict: dict,
+    x: torch.Tensor,
+    c: int,
+    to_seq_fn=None,
+) -> tuple[torch.Tensor, torch.Tensor, dict]:
+    """
+    Like build_cnn_all_polytopes, but computes P3(k) for ALL classes k (not just c).
+
+    For each bit-width, returns:
+      - A_correct, b_correct  : P2 (same as build_cnn_all_polytopes)
+      - per_class_dict        : {k: (A_k, b_k)} where (A_k, b_k) defines
+                                P3(k) = A_correct + "qmodel predicts k" constraints
+
+    The existing build_cnn_all_polytopes function is NOT modified.
+
+    Convention: Ax + b <= 0
+
+    Parameters
+    ----------
+    model : nn.Module
+    qmodels_dict : dict {bits (int): qmodel (nn.Module)}
+    x : torch.Tensor  — shape (1, C, H, W) or (C, H, W)
+    c : int
+    to_seq_fn : callable or None
+
+    Returns
+    -------
+    A_base : torch.Tensor  (n_base, input_flat_dim)
+    b_base : torch.Tensor  (n_base,)
+    polytopes_dict : dict {bits: (A_correct, b_correct, per_class_dict)}
+        per_class_dict : dict {k (int): (A_k, b_k)} for k in range(n_classes)
+    """
+    if to_seq_fn is None:
+        to_seq_fn = model_to_sequential
+
+    x_sample = x.squeeze(0) if x.dim() == 4 else x  # (C, H, W)
+
+    # Model shortcuts — computed ONCE
+    seq_model = to_seq_fn(model)
+    cst_model = _Constraints()
+    msg_model = _Message(x_sample)
+    with torch.no_grad():
+        msg_model = _collect(seq_model, msg_model, cst_model)
+
+    A_base, b_base = _constraints_to_Ab(cst_model, msg_model.s_weight, msg_model.s_bias, c)
+
+    n_classes = msg_model.s_weight.shape[1]
+
+    polytopes_dict = {}
+    for bits, qmodel in qmodels_dict.items():
+        seq_q = to_seq_fn(qmodel)
+        cst_q = _Constraints()
+        msg_q = _Message(x_sample)
+        with torch.no_grad():
+            msg_q = _collect(seq_q, msg_q, cst_q)
+
+        A_act_q, b_act_q = _activation_constraints_to_Ab(cst_q)
+
+        # A_correct: A_base + qmodel activation  (same as build_cnn_all_polytopes)
+        A_correct = torch.cat([A_base, A_act_q], dim=0)
+        b_correct = torch.cat([b_base, b_act_q], dim=0)
+
+        # P3(k) for each class k: A_correct + "qmodel predicts k" constraints
+        per_class = {}
+        for k in range(n_classes):
+            A_cls_k, b_cls_k = _class_constraints_to_Ab(msg_q.s_weight, msg_q.s_bias, k)
+            per_class[k] = (
+                torch.cat([A_correct, A_cls_k], dim=0),
+                torch.cat([b_correct, b_cls_k], dim=0),
+            )
+
+        polytopes_dict[bits] = (A_correct, b_correct, per_class)
+
+    return A_base, b_base, polytopes_dict
+
+
 def _activation_constraints_to_Ab(
     cst: _Constraints,
 ) -> tuple[torch.Tensor, torch.Tensor]:
