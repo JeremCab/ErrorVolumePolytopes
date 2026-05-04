@@ -35,10 +35,12 @@ results/volumes_mlp_old/
 results/volumes_mlp_aug/
 results/volumes_mlp_walk/
 results/volumes_mlp_walk1point/
+results/volumes_v3k_mlp/
 
 results/volumes_cnn/
 results/volumes_cnn_aug/
 results/volumes_cnn_walk1point/
+results/volumes_v3k_cnn/
 
 results/volumes_aug_mlp_qcorrect/
 results/volumes_aug_mlp_qincorrect/

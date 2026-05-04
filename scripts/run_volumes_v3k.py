@@ -321,7 +321,12 @@ def main():
     parser.add_argument("--n_directions", type=int, default=200)
     parser.add_argument("--n_workers",    type=int, default=_default_n_workers())
     parser.add_argument("--output_dir",   type=str, default=None)
+    parser.add_argument("--bits_grid",    type=int, nargs="+", default=None,
+                        help="Bit-widths to evaluate (default: 4 6 8 10 12 16). "
+                             "Example: --bits_grid 4")
     args = parser.parse_args()
+
+    bits_grid = args.bits_grid if args.bits_grid is not None else BITS_GRID
 
     if args.model_path is None:
         args.model_path = f"checkpoints/fashion_{args.model_type}_best.pth"
@@ -342,7 +347,7 @@ def main():
     log.info(f"Sample idx   : {args.sample_idx}")
     log.info(f"Model        : {args.model_path}")
     log.info(f"N directions : {args.n_directions}")
-    log.info(f"Bits grid    : {BITS_GRID}")
+    log.info(f"Bits grid    : {bits_grid}")
     log.info(f"Workers      : {args.n_workers}")
 
     log.info("\nLoading model...")
@@ -361,7 +366,7 @@ def main():
     t0 = time.perf_counter()
 
     qmodels_dict = {}
-    for bits in BITS_GRID:
+    for bits in bits_grid:
         qmodel = quantize_model(model, bits=bits)
         qmodel.eval()
         qmodels_dict[bits] = qmodel
@@ -376,7 +381,7 @@ def main():
         )
 
     # Infer n_classes from the per_class dict of the first bit-width
-    first_bits  = BITS_GRID[0]
+    first_bits  = bits_grid[0]
     n_classes   = len(polytopes_dict[first_bits][2])
 
     log.info(f"A_base (model-only): {tuple(A_base.shape)}")
@@ -399,7 +404,7 @@ def main():
         "data_path":         args.data_path,
         "n_directions":      args.n_directions,
         "n_directions_used": result["n_directions_used"],
-        "bits_grid":         BITS_GRID,
+        "bits_grid":         bits_grid,
         "width_base":        result["width_base"],
         "widths_correct":    {str(k): v for k, v in result["widths_correct"].items()},
         "widths_both":       {str(k): v for k, v in result["widths_both"].items()},

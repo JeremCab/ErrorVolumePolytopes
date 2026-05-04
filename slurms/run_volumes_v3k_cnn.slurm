@@ -5,8 +5,8 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=40
-#SBATCH --array=0-49          # one task per sample — adjust range as needed
-#SBATCH --time=16:00:00
+#SBATCH --array=0-999
+#SBATCH --time=16:00:00       # est. ~9.5h (5.5× the 1.73h of old run_volumes_cnn)
 #SBATCH --output=logs/volumes_v3k_cnn_%A_%a.out
 #SBATCH --error=logs/volumes_v3k_cnn_%A_%a.err
 
