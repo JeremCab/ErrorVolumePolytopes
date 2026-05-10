@@ -223,6 +223,34 @@ def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_work
 
     # Sample all directions in main process
     d = A_base_np.shape[1]
+
+    # ── Pre-screen empty P3(k) polytopes (1 feasibility LP each) ────────────
+    # The feasibility LP (zero objective) asks: "does ANY point x satisfy all
+    # constraints of P3(k)?"  This is direction-independent — unlike the per-
+    # direction LPs which optimise u·x for a specific u.  If HiGHS reports the
+    # system infeasible, the polytope is provably empty (no feasible point
+    # exists at all), so every one of the 200×2 direction LPs would also fail.
+    # Skipping them is safe: absent classes produce wk_vals=[] → wk=0.0 in the
+    # aggregation below, which is the correct result for an empty polytope.
+    # Cost: 6×10 = 60 small LPs upfront.  Saving: up to 200×2×(skipped classes)
+    # LPs — typically ~8/10 classes are empty, giving ~3–5× fewer LP solves.
+    n_prescreened = 0
+    for bits in list(polytopes_np.keys()):
+        A_c_np, b_c_np, per_class_deltas = polytopes_np[bits]
+        non_empty = {}
+        for k, (A_cls_k_np, b_cls_k_np) in per_class_deltas.items():
+            A_k_full = np.vstack([A_c_np, A_cls_k_np])
+            b_k_full = np.concatenate([b_c_np, b_cls_k_np])
+            feas = linprog(np.zeros(d), A_ub=A_k_full, b_ub=b_k_full,
+                           bounds=bounds, method="highs")
+            if feas.success:
+                non_empty[k] = (A_cls_k_np, b_cls_k_np)
+            else:
+                n_prescreened += 1
+        polytopes_np[bits] = (A_c_np, b_c_np, non_empty)
+    n_total = len(polytopes_np) * n_classes
+    log.info(f"Pre-screening: {n_prescreened}/{n_total} P3(k) polytopes empty → skipped.")
+
     directions = np.random.randn(n_directions, d)
     directions /= np.linalg.norm(directions, axis=1, keepdims=True)
 
