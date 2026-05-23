@@ -60,7 +60,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import numpy as np
-from scipy.optimize import linprog
+from src.optim.lp import linprog
 import torch
 from tqdm import tqdm
 
