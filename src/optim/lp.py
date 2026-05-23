@@ -27,6 +27,7 @@ def linprog(c, A_ub=None, b_ub=None, A_eq=None, b_eq=None, bounds=None,
     # 2. Initialize Gurobi model (suppressing console output to match SciPy default)
     env = gp.Env(empty=True)
     env.setParam("OutputFlag", 0)
+    env.setParam("Threads", 1)
     env.start()
     m = gp.Model("linprog", env=env)
 
