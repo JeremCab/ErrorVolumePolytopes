@@ -77,14 +77,10 @@ return best_x'   # point with the smallest q-model margin across all directions
 **If best_score < 0**: q-model misclassifies best_x' → V3 = 0.
 **If best_score ≥ 0 but small**: q-model barely predicts c → V3 << V2.
 
-The returned x' is still inside Polytope #1 by construction (it is on the boundary of
-Polytope #1, where either the model activation or model classification constraint is
-active).
+The returned x' is still inside Polytope #1 by construction (it is on the boundary of Polytope #1, where either the model activation or model classification constraint is active).
 
-**Pros.** No new LP calls.  Reuses the existing chord infrastructure.  The 200 random
-directions already drawn provide a good coverage of the boundary.
-**Cons.** x' is forced to be on the Polytope #1 boundary — may produce slightly
-degenerate Polytope #2 (but it is still a valid interior point of Polytope #2 unless
+**Pros.** No new LP calls.  Reuses the existing chord infrastructure.  The 200 random directions already drawn provide a good coverage of the boundary.
+**Cons.** x' is forced to be on the Polytope #1 boundary — may produce slightly degenerate Polytope #2 (but it is still a valid interior point of Polytope #2 unless
 the q-model activation boundary also happens to pass through x').
 
 ---

@@ -2,8 +2,7 @@
 
 ## Context
 
-Used to find augmented data points x' inside Polytope #1 (model activation + model
-classification constraints) where the q-model has a **different activation pattern**
+Used to find augmented data points x' inside Polytope #1 (model activation + model classification constraints) where the q-model has a **different activation pattern**
 than at the original x₀. One augmented point per original x_i is targeted.
 
 ## Convention
