@@ -1,0 +1,28 @@
+{
+  "seed": 42,
+  "model_type": "cnn",
+  "model_path": "checkpoints/fashion_cnn_best.pth",
+  "data_path": "data/fashionMNIST_sample760_cnn.pt",
+  "bits": 16,
+  "max_tries": 200,
+  "nb_aug_points": 50,
+  "max_steps": 10000,
+  "nb_diverse": null,
+  "strategy": "walk",
+  "tag": "sample760_b16",
+  "walk_mode": "projected",
+  "p1_filter_tol": 0.0001,
+  "n_samples": 1,
+  "n_processed": 1,
+  "n_augmented": 1,
+  "elapsed_s": 729.1,
+  "reps_per_sample": [
+    0
+  ],
+  "avg_reps_per_sample": 0.0,
+  "max_reps_per_sample": 0,
+  "n_zero_reps": 1,
+  "zero_rep_indices": [
+    0
+  ]
+}

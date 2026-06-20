@@ -234,6 +234,9 @@ def main():
             reps_per_sample.append(n_reps)
             if n_reps == 0:
                 failed_indices.append(idx)
+            # x0 is the canonical representative of its own activation class Ã(x0);
+            # always include it so {x0} ∪ reps covers P1 by representatives of distinct P2 tiles.
+            augmented.append((x0.squeeze(0).detach().cpu(), c_i))
             for rep in reps:
                 # Remove batch dim — same shape as the original x_i
                 augmented.append((rep.squeeze(0), c_i))

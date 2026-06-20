@@ -1,0 +1,33 @@
+=======================================================
+  Model type   : CNN
+  Device       : mps
+  Model path   : checkpoints/fashion_cnn_best.pth
+  Data path    : data/fashionMNIST_sample760_cnn.pt
+  Q-model bits : 16
+  Strategy     : walk
+  Walk mode    : projected
+  Nb aug pts   : 50  (collect target per sample)
+  Max steps    : 10000   (hard cap)
+  Nb diverse   : all  (no diversity selection)
+  P1 filter    : tol=0.0001  (drop reps outside P1)
+  Seed         : 42
+  N samples    : all
+  Output       : data/fashionMNIST_augmented_cnn_seed42_walk_sample760_b16.pt
+=======================================================
+
+Loading model...
+  CNN loaded on mps, 16-bit q-model built.
+
+Loading dataset...
+  1 samples in dataset, processing 1.
+
+Augmenting...
+samples:   0%|          | 0/1 [00:00<?, ?it/s]samples: 100%|██████████| 1/1 [12:09<00:00, 729.11s/it]samples: 100%|██████████| 1/1 [12:09<00:00, 729.11s/it]
+
+Finished in 729.1s  (729.13s/sample)
+Total augmented points : 1
+Reps/sample  avg=0.00  max=0
+Samples with 0 reps    : 1/1  (100.0%)
+
+Saved dataset : data/fashionMNIST_augmented_cnn_seed42_walk_sample760_b16.pt  (1 points)
+Saved log     : data/fashionMNIST_augmented_cnn_seed42_walk_sample760_b16_log.json
