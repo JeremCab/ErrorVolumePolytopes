@@ -42,7 +42,8 @@ def _to_numpy(x):
 
 
 def chebyshev_radius(A, b, box=(-1.0, 1.0), eps=0.0,
-                     zero_tol=1e-6, method="highs", scale_rows=True):
+                     zero_tol=1e-6, method="highs", scale_rows=True,
+                     time_limit=None):
     """
     Chebyshev (largest inscribed ball) radius of  {x : A x + b <= 0} ∩ box.
 
@@ -66,6 +67,11 @@ def chebyshev_radius(A, b, box=(-1.0, 1.0), eps=0.0,
            form fails to converge altogether (2029 s, no solution) while the scaled
            one solves in 1628 s. Pass False only to reproduce the older unscaled
            results.
+    time_limit : seconds allowed to the LP (default None = no cap). HiGHS honours
+           it (measured 601.5 s for a 600 s cap), and a capped LP returns
+           status 1, hence 'failed' — never 'empty'. Set it on a cluster: these
+           LPs take ~1600-2650 s when they converge and can fail to converge at
+           all, so an uncapped one can eat a whole task's wall-time.
 
     Returns
     -------
@@ -120,7 +126,9 @@ def chebyshev_radius(A, b, box=(-1.0, 1.0), eps=0.0,
     c[-1] = -1.0                                   # max r  ==  min -r
     bounds = [(None, None)] * n + [(0.0, None)]    # x free, r >= 0
 
-    res = linprog(c, A_ub=A_cheb, b_ub=b_cheb, bounds=bounds, method=method)
+    options = {} if time_limit is None else {"time_limit": float(time_limit)}
+    res = linprog(c, A_ub=A_cheb, b_ub=b_cheb, bounds=bounds, method=method,
+                  options=options)
 
     # Only linprog status 2 (infeasible) proves the polytope is empty: with r >= 0
     # allowed, the LP is feasible iff the polytope is non-empty. Statuses 1
