@@ -15,6 +15,9 @@ It also VALIDATES, rather than assuming:
   - that each shard's first point really is the original it claims (the generator
     always puts x_0 first; if that ever changed, the provenance would be wrong).
 
+On a Jean Zay login node this needs torch, so load the environment first:
+    module load pytorch-gpu/py3/2.8.0
+
 Usage
 -----
     python scripts/merge_aug_shards.py --shard_dir data/gen150 --n_orig 150 \

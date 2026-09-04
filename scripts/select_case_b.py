@@ -20,6 +20,9 @@ Chebyshev radius, plus a sample of case-A tiles as a cross-check: there the
 lemma predicts rho = 0 for the other classes, and confirming it validates both
 criteria against each other.
 
+On a Jean Zay login node this needs numpy, so load the environment first:
+    module load pytorch-gpu/py3/2.8.0
+
 Usage
 -----
     python scripts/select_case_b.py --results_dir results/volumes_v3k_cnn_gen150 \\

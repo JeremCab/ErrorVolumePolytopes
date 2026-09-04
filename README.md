@@ -174,7 +174,17 @@ Key options:
 
 ---
 
-## MCMC Hit-and-Run augmented dataset (new GACC pipeline)
+## MCMC Hit-and-Run augmented dataset (superseded — see the next section)
+
+> **⚠️ This procedure builds a SINGLE augmented dataset.** The commands below omit
+> `--bits`, so they silently use the default `b=4`: the P1 tiling of one quantized
+> network is then applied unchanged to every bit-width. That is what `aug200` is, and
+> it is very likely why its downstream results came out inconclusive.
+>
+> The correct pipeline builds **one dataset per bit-width**, because the tiles are the
+> linearity regions of the *quantized* network. It is documented in
+> "b-specific augmented campaign" below. Keep this section for reference only.
+
 
 Generates augmented data points inside Polytope #1 (the FP-model linear region) by
 running a Hit-and-Run Markov chain. Each collected point lands in a *different*
@@ -248,6 +258,111 @@ new_GACC(b) = Σ_y V3_c(y, b) / Σ_y Σ_k V3_k(y, b)
 
 where the sum runs over all augmented points `y`. Use `notebooks/plot_volumes_v3k.ipynb`
 (point it to `results/volumes_v3k_mlp_aug/`) to visualise convergence and GACC vs b.
+
+---
+
+## b-specific augmented campaign (current pipeline)
+
+Each bit-width gets its **own** augmented dataset: the tiles that pave P1 are the
+linearity regions of the *quantized* network `Ñ_b`, so they change with `b`. P1 itself
+does not — it is defined by the full-precision network alone — which is exactly what
+makes the generalized accuracy comparable across bit-widths.
+
+Everything below runs on Jean Zay. **Load the environment first** — the login node has
+no `torch` until you do:
+
+```bash
+module load pytorch-gpu/py3/2.8.0
+cd $WORK/ErrorVolumePolytopes
+mkdir -p logs                    # SLURM does not create it, and fails silently without it
+```
+
+Every stage is idempotent: relaunching an array recomputes only what is missing. Each
+script prints the `sbatch` command for the next stage, array bounds included, so no count
+is ever retyped by hand.
+
+### Step 1 — Generate the datasets (array of 150 × 4 tasks)
+
+```bash
+sbatch --array=0-2 slurms/gen_aug_150_cnn.slurm    # smoke test first: 3 tasks, ~2 min
+sbatch slurms/gen_aug_150_cnn.slurm                # then the 600
+```
+
+One task = one (original point, bit-width). Expect 6 points per file at `b=4`
+(the original plus 5 representatives) and 1 at `b≥10`. Shards land in
+`data/gen150/b{BB}/`.
+
+`--cpus-per-task=4`, not 40: the walk is a sequential Markov chain and cannot be
+parallelised inside a task, so asking for 40 cores would be billed for nothing.
+
+### Step 2 — Merge the shards into one dataset per bit-width
+
+```bash
+python scripts/merge_aug_shards.py --shard_dir data/gen150 --n_orig 150 --bits 4 6 10 16
+```
+
+This **refuses to merge if a shard is missing**, listing the offending indices: a
+partially failed array would otherwise produce a file that looks complete. Relaunch the
+Step-1 array to fill the gaps, then merge again.
+
+Its summary table is already a result — the number of representatives per original point
+against `b` measures how much of P1 the quantized network's own linearity region already
+covers.
+
+### Step 3 — Mean widths (stage 1 of the volumes)
+
+```bash
+python scripts/make_volume_tasks.py --bits 4 6 10 16   # writes the task table, prints the sbatch line
+sbatch --array=0-2 slurms/run_volumes_gen150_cnn.slurm # smoke test
+sbatch --array=0-<N> slurms/run_volumes_gen150_cnn.slurm
+```
+
+Computes the mean width of P2 and of every non-empty P3(k) — the numerator and
+denominator of the generalized accuracy. `--skip_base` is on: P1 appears nowhere in that
+formula yet cost 2 LPs per direction, about a quarter of each task. Direction validity is
+taken from P2 instead. Run a subsample **without** the flag if you want the V2/V1 ratio.
+
+Worth reading in the logs:
+
+| line | meaning |
+|---|---|
+| `width_base=skipped` | `--skip_base` is in effect |
+| `Pre-screening: N/10 ... provably empty` | classes proven empty, hence skipped |
+| `N LP(s) retried with interior point` | the simplex could not certify infeasibility |
+| `N polytope(s) KEPT because ...` | even interior point could not decide — nothing is zeroed without proof |
+
+### Step 4 — Apply the criterion, get both gammas
+
+```bash
+python scripts/select_case_b.py --bits 4 6 10 16 --tol_scan
+```
+
+Prints, per bit-width, the two variants of gamma and the case A / case B counts. By the
+mean-width lemma, a tile where some class satisfies `d(P3^k) = d(P2)` needs no Chebyshev
+radius at all: that class *is* P2 and every other subpolytope has zero volume. Only the
+remaining tiles do.
+
+`--tol_scan` prints the case-A rate at six tolerances. The usable window is
+`[1e-8, 1e-4]` — four orders of magnitude over which the verdict does not change — so the
+tolerance can be *shown* not to be a free parameter rather than merely asserted. Below
+`1e-9` genuine equalities start being rejected.
+
+### Step 5 — Chebyshev radii (stage 2, only where needed)
+
+```bash
+sbatch --array=0-<M> slurms/run_chebyshev_gen150_cnn.slurm
+```
+
+Evaluates the zero-volume condition on the case-B tiles, plus a sample of case-A tiles as
+a cross-check (there the lemma predicts a zero radius; confirming it validates the two
+criteria against each other).
+
+Kept apart from Step 3 deliberately: a Chebyshev LP costs roughly 17–19 times a
+mean-width LP and its cost is unpredictable — in the unscaled formulation it does not
+converge at all at `b=4`. Running it inside Step 3 would put the primary computation at
+the mercy of the unpredictable one. Every LP is capped by `--time_limit`, and a capped LP
+is reported as `failed`, never as `empty`: `empty` would zero the polytope in the
+accuracy formula, whereas `failed` says the value is unusable.
 
 ---
 
