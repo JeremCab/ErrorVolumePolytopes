@@ -100,6 +100,14 @@ def main():
                              "None = no selection, keep all found (default: None).")
     parser.add_argument("--seed",       type=int, default=42,
                         help="RNG seed — change to generate a different augmented dataset")
+    parser.add_argument("--start_idx",  type=int, default=0,
+                        help="Index of the first original point to process (default: 0). "
+                             "With --n_samples 1 this makes the script address exactly one "
+                             "point, which is what a SLURM array needs (one task per "
+                             "original). IMPORTANT: give each task a distinct --tag, or "
+                             "they all write to the same output file. The seed is derived "
+                             "from (seed, start_idx) so tasks draw independent streams; "
+                             "start_idx=0 keeps the historical seeding untouched.")
     parser.add_argument("--n_samples",  type=int, default=None,
                         help="Process only the first N samples (default: all). Use for smoke tests.")
     parser.add_argument("--strategy",  type=str, default="activation",
@@ -184,13 +192,22 @@ def main():
     log.info("\nLoading dataset...")
     dataset = torch.load(args.data_path, weights_only=False)
     n_total = len(dataset)
-    n       = args.n_samples if args.n_samples is not None else n_total
-    if n > n_total:
-        raise ValueError(f"--n_samples {n} exceeds dataset size {n_total}")
-    log.info(f"  {n_total} samples in dataset, processing {n}.")
+    start   = args.start_idx
+    if not (0 <= start < n_total):
+        raise ValueError(f"--start_idx {start} outside dataset of size {n_total}")
+    n       = args.n_samples if args.n_samples is not None else n_total - start
+    if start + n > n_total:
+        raise ValueError(f"--start_idx {start} + --n_samples {n} exceeds dataset "
+                         f"size {n_total}")
+    indices = list(range(start, start + n))
+    log.info(f"  {n_total} samples in dataset, processing {n} "
+             f"(indices {indices[0]}..{indices[-1]}).")
 
     # Augmentation loop
-    rng            = np.random.default_rng(args.seed)
+    # start_idx=0 reproduces the historical stream exactly; a shifted start gets an
+    # independent one, so array tasks do not all replay the same random directions.
+    rng            = (np.random.default_rng(args.seed) if start == 0
+                      else np.random.default_rng([args.seed, start]))
     augmented      = []       # list of (x', c) — same format as original dataset
     failed_indices = []       # indices where fallback to original was used (activation strategy)
     reps_per_sample = []      # number of representatives per sample (walk strategy)
@@ -198,7 +215,7 @@ def main():
     log.info("\nAugmenting...")
     t_total = time.perf_counter()
 
-    for idx in tqdm(range(n), desc="samples"):
+    for idx in tqdm(indices, desc="samples"):
         x_i, c_i = dataset[idx]
         c_i = int(c_i)
 
@@ -304,6 +321,8 @@ def main():
         "walk_mode":      args.walk_mode if args.strategy == "walk" else None,
         "p1_filter_tol":  args.p1_filter_tol if args.strategy == "walk" else None,
         "n_samples":      n_total,
+        "start_idx":      start,
+        "orig_indices":   indices,
         "n_processed":    n,
         "n_augmented":    n_aug,
         "elapsed_s":      round(elapsed, 1),
