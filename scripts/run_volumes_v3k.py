@@ -93,9 +93,10 @@ _WORKER_DIRECTIONS      = None   # (n_directions, d)
 _WORKER_BOUNDS          = None
 
 
-def _init_worker_v3k(A_base, b_base, polytopes_v3k, directions, bounds):
-    global _WORKER_A_BASE, _WORKER_B_BASE
+def _init_worker_v3k(A_base, b_base, polytopes_v3k, directions, bounds, skip_base=False):
+    global _WORKER_A_BASE, _WORKER_B_BASE, _WORKER_SKIP_BASE
     global _WORKER_POLYTOPES_V3K, _WORKER_DIRECTIONS, _WORKER_BOUNDS
+    _WORKER_SKIP_BASE     = skip_base
     _WORKER_A_BASE        = A_base
     _WORKER_B_BASE        = b_base
     _WORKER_POLYTOPES_V3K = polytopes_v3k
@@ -107,20 +108,28 @@ def _run_direction_v3k(k):
     """Solve all LPs for direction k.
 
     Returns (k, w_base, w_bits) where:
-      w_base  : float or None (None → direction discarded)
+      w_base  : float  — width of P1 along u
+                None   — the P1 LPs failed, so the direction is discarded
+                nan    — P1 was not computed (skip_base); validity then comes
+                         from P2, i.e. from w_bits
       w_bits  : {bits: (w_correct, {cls_k: w_k})} or None
     """
     u = _WORKER_DIRECTIONS[k]
 
-    # A_base LP
-    res_max_base = linprog(c=-u, A_ub=_WORKER_A_BASE, b_ub=_WORKER_B_BASE,
-                           bounds=_WORKER_BOUNDS, method="highs")
-    res_min_base = linprog(c= u, A_ub=_WORKER_A_BASE, b_ub=_WORKER_B_BASE,
-                           bounds=_WORKER_BOUNDS, method="highs")
-    if not (res_max_base.success and res_min_base.success):
-        return k, None, None
+    # A_base (P1) LP — skipped entirely under skip_base: P1 appears nowhere in
+    # the generalized accuracy (19), which only involves P2 and its subpolytopes.
+    # It costs 2 LPs per direction, i.e. a full polytope's worth of work.
+    if _WORKER_SKIP_BASE:
+        w_base = float("nan")
+    else:
+        res_max_base = linprog(c=-u, A_ub=_WORKER_A_BASE, b_ub=_WORKER_B_BASE,
+                               bounds=_WORKER_BOUNDS, method="highs")
+        res_min_base = linprog(c= u, A_ub=_WORKER_A_BASE, b_ub=_WORKER_B_BASE,
+                               bounds=_WORKER_BOUNDS, method="highs")
+        if not (res_max_base.success and res_min_base.success):
+            return k, None, None
 
-    w_base = (-res_max_base.fun) - res_min_base.fun
+        w_base = (-res_max_base.fun) - res_min_base.fun
 
     # Per-bit: A_correct + per-class P3(k)
     w_bits = {}
@@ -181,7 +190,52 @@ def load_sample(data_path, sample_idx):
 # Main volume computation (parallel over directions)
 # ---------------------------------------------------------------------------
 
-def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_workers, n_classes):
+# ---------------------------------------------------------------------------
+# Pre-screen workers (one feasibility LP per (bits, class))
+# ---------------------------------------------------------------------------
+
+_PS_POLYTOPES = None   # {bits: (A_c, b_c, {k: (A_cls_k, b_cls_k)})}
+_PS_BOUNDS    = None
+
+
+def _init_worker_prescreen(polytopes_np, bounds):
+    global _PS_POLYTOPES, _PS_BOUNDS
+    _PS_POLYTOPES = polytopes_np
+    _PS_BOUNDS    = bounds
+
+
+def _run_prescreen(task):
+    """Feasibility LP for one (bits, class): is P3(k) non-empty?
+
+    Same test as the former serial loop — zero objective, `success` as the
+    verdict — so the outcome is bit-for-bit identical; only the scheduling
+    changes. Returns the linprog status too, so a solver failure can be told
+    apart from a genuine infeasibility downstream.
+    """
+    bits, k = task
+    A_c, b_c, deltas = _PS_POLYTOPES[bits]
+    A_cls_k, b_cls_k = deltas[k]
+    A_k = np.vstack([A_c, A_cls_k])
+    b_k = np.concatenate([b_c, b_cls_k])
+    c0  = np.zeros(A_k.shape[1])
+    feas = linprog(c0, A_ub=A_k, b_ub=b_k, bounds=_PS_BOUNDS, method="highs")
+
+    retried = False
+    if not feas.success and feas.status != 2:
+        # HiGHS' default (dual simplex) returns status 4 with "HiGHS Status 0:
+        # Not Set" on some degenerate systems — it cannot certify infeasibility.
+        # Interior point settles those same instances, and faster: measured on
+        # MLP sample 0, b=16, classes 0/2/8 — simplex fails in ~43 s (with or
+        # without presolve), IPM proves infeasibility in ~11 s. The retry costs
+        # seconds; skipping it costs that class's full 2*n_directions LPs.
+        retried = True
+        feas = linprog(c0, A_ub=A_k, b_ub=b_k, bounds=_PS_BOUNDS,
+                       method="highs-ipm")
+    return bits, k, bool(feas.success), int(feas.status), retried
+
+
+def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_workers, n_classes,
+                    skip_base=False):
     """
     Estimate mean widths of A_base, A_correct (P2), and P3(k) for all k.
 
@@ -197,7 +251,8 @@ def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_work
     Returns
     -------
     dict with "width_base", "widths_correct", "widths_both" (per-class list),
-    "n_directions_used"
+    "n_directions_used".  Under skip_base, "width_base" is None: P1 is not
+    computed, and a direction counts as valid iff the P2 LPs succeeded.
     """
 
     def to_numpy(t):
@@ -234,22 +289,55 @@ def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_work
     # aggregation below, which is the correct result for an empty polytope.
     # Cost: 6×10 = 60 small LPs upfront.  Saving: up to 200×2×(skipped classes)
     # LPs — typically ~8/10 classes are empty, giving ~3–5× fewer LP solves.
-    n_prescreened = 0
+    # These LPs are the same size as the direction LPs, so run them in a pool:
+    # serially they dominated the task (10 LPs x ~460 s measured on the CNN at
+    # b=16, i.e. ~77 min that no amount of extra cores could shorten).
+    ps_tasks = [(bits, k) for bits in polytopes_np for k in polytopes_np[bits][2]]
+    ps_res   = {}
+    t_ps = time.perf_counter()
+    with ProcessPoolExecutor(
+        max_workers=min(n_workers, max(1, len(ps_tasks))),
+        initializer=_init_worker_prescreen,
+        initargs=(polytopes_np, bounds),
+    ) as ps_exec:
+        n_retried = 0
+        for bits, k, ok, status, retried in ps_exec.map(_run_prescreen, ps_tasks):
+            ps_res[(bits, k)] = (ok, status)
+            n_retried += int(retried)
+
+    # A class is discarded ONLY on a proven infeasibility (linprog status 2).
+    # Any other failure (iteration limit, numerical trouble) means the LP could
+    # not decide, so the class is KEPT and the direction LPs settle it: they all
+    # fail — giving width 0 — if the polytope really is empty, and give the true
+    # width otherwise. This is the pre-2026-05-10 behaviour, kept as a safety net.
+    # Without it, the pre-screen concentrates into a single LP a risk that the
+    # direction LPs spread over 200: one bad solve would silently zero a whole
+    # class and remove it from the denominator of (19), inflating gamma.
+    # It costs 2*n_directions extra LPs, but only when a failure actually occurs.
+    n_prescreened      = 0
+    n_kept_on_failure  = 0
     for bits in list(polytopes_np.keys()):
         A_c_np, b_c_np, per_class_deltas = polytopes_np[bits]
         non_empty = {}
         for k, (A_cls_k_np, b_cls_k_np) in per_class_deltas.items():
-            A_k_full = np.vstack([A_c_np, A_cls_k_np])
-            b_k_full = np.concatenate([b_c_np, b_cls_k_np])
-            feas = linprog(np.zeros(d), A_ub=A_k_full, b_ub=b_k_full,
-                           bounds=bounds, method="highs")
-            if feas.success:
+            ok, status = ps_res[(bits, k)]
+            if ok or status != 2:
                 non_empty[k] = (A_cls_k_np, b_cls_k_np)
+                if not ok:
+                    n_kept_on_failure += 1
             else:
                 n_prescreened += 1
         polytopes_np[bits] = (A_c_np, b_c_np, non_empty)
     n_total = len(polytopes_np) * n_classes
-    log.info(f"Pre-screening: {n_prescreened}/{n_total} P3(k) polytopes empty → skipped.")
+    log.info(f"Pre-screening: {n_prescreened}/{n_total} P3(k) polytopes provably empty "
+             f"→ skipped ({time.perf_counter() - t_ps:.1f}s)")
+    if n_retried:
+        log.info(f"Pre-screening: {n_retried} LP(s) retried with interior point after the "
+                 f"simplex failed to decide.")
+    if n_kept_on_failure:
+        log.warning(f"Pre-screening: {n_kept_on_failure} polytope(s) KEPT because their "
+                    f"feasibility LP failed without proving infeasibility (status != 2). "
+                    f"They are being computed in full rather than silently zeroed.")
 
     directions = np.random.randn(n_directions, d)
     directions /= np.linalg.norm(directions, axis=1, keepdims=True)
@@ -264,18 +352,20 @@ def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_work
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_worker_v3k,
-        initargs=(A_base_np, b_base_np, polytopes_np, directions, bounds),
+        initargs=(A_base_np, b_base_np, polytopes_np, directions, bounds, skip_base),
     ) as executor:
         for k, w_base, w_bits in tqdm(
             executor.map(_run_direction_v3k, list(range(n_directions))),
             total=n_directions,
             desc="Directions",
         ):
-            if w_base is None:
+            if w_base is None:              # P1 LPs failed -> discard direction
                 n_failed += 1
                 continue
-            widths_base[k] = w_base
+            if not np.isnan(w_base):            # nan = skip_base, nothing to store
+                widths_base[k] = w_base
             if w_bits is None:
+                n_failed += 1
                 continue
             for bits, val in w_bits.items():
                 if val is None:
@@ -289,10 +379,20 @@ def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_work
     elapsed = time.perf_counter() - t0
     log.info(f"Elapsed: {elapsed:.1f}s  |  Failed directions: {n_failed}/{n_directions}")
 
-    valid_keys = sorted(widths_base.keys())
-    n_used     = len(valid_keys)
-    width_base = float(np.mean([widths_base[k] for k in valid_keys]))
-    log.info(f"  width_base={width_base:.4f}")
+    if skip_base:
+        # P1 was not computed: a direction is valid iff P2 was solved for at
+        # least one bit-width. This replaces P1 as the direction filter.
+        valid_set = set()
+        for bits in polytopes_np:
+            valid_set |= set(widths_correct[bits].keys())
+        valid_keys = sorted(valid_set)
+        width_base = None
+        log.info("  width_base=skipped (--skip_base); direction validity taken from P2")
+    else:
+        valid_keys = sorted(widths_base.keys())
+        width_base = float(np.mean([widths_base[k] for k in valid_keys]))
+        log.info(f"  width_base={width_base:.4f}")
+    n_used = len(valid_keys)
 
     out_correct   = {}
     out_both      = {}   # {bits: [w_0, w_1, ..., w_{n_classes-1}]}
@@ -352,6 +452,14 @@ def main():
     parser.add_argument("--bits_grid",    type=int, nargs="+", default=None,
                         help="Bit-widths to evaluate (default: 4 6 8 10 12 16). "
                              "Example: --bits_grid 4")
+    parser.add_argument("--skip_base",    action="store_true",
+                        help="Do not compute the model-only polytope P1. P1 does not "
+                             "appear in the generalized accuracy (19), which involves "
+                             "only P2 and its subpolytopes, yet it costs 2 LPs per "
+                             "direction (~21-27%% of a task). Direction validity is "
+                             "then taken from P2 instead. 'width_base' is null in the "
+                             "output; run without this flag on a subsample if the "
+                             "V2/V1 ratio is needed.")
     args = parser.parse_args()
 
     bits_grid = args.bits_grid if args.bits_grid is not None else BITS_GRID
@@ -422,7 +530,8 @@ def main():
 
     log.info("\nRunning V3k volume experiment...")
     result = run_volumes_v3k(A_base, b_base, polytopes_dict, bounds,
-                             args.n_directions, args.n_workers, n_classes)
+                             args.n_directions, args.n_workers, n_classes,
+                             skip_base=args.skip_base)
 
     output = {
         "model_type":        args.model_type,
