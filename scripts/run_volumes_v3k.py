@@ -93,10 +93,12 @@ _WORKER_DIRECTIONS      = None   # (n_directions, d)
 _WORKER_BOUNDS          = None
 
 
-def _init_worker_v3k(A_base, b_base, polytopes_v3k, directions, bounds, skip_base=False):
-    global _WORKER_A_BASE, _WORKER_B_BASE, _WORKER_SKIP_BASE
+def _init_worker_v3k(A_base, b_base, polytopes_v3k, directions, bounds, skip_base=False,
+                     lp_method="highs"):
+    global _WORKER_A_BASE, _WORKER_B_BASE, _WORKER_SKIP_BASE, _WORKER_LP_METHOD
     global _WORKER_POLYTOPES_V3K, _WORKER_DIRECTIONS, _WORKER_BOUNDS
     _WORKER_SKIP_BASE     = skip_base
+    _WORKER_LP_METHOD     = lp_method
     _WORKER_A_BASE        = A_base
     _WORKER_B_BASE        = b_base
     _WORKER_POLYTOPES_V3K = polytopes_v3k
@@ -123,9 +125,9 @@ def _run_direction_v3k(k):
         w_base = float("nan")
     else:
         res_max_base = linprog(c=-u, A_ub=_WORKER_A_BASE, b_ub=_WORKER_B_BASE,
-                               bounds=_WORKER_BOUNDS, method="highs")
+                               bounds=_WORKER_BOUNDS, method=_WORKER_LP_METHOD)
         res_min_base = linprog(c= u, A_ub=_WORKER_A_BASE, b_ub=_WORKER_B_BASE,
-                               bounds=_WORKER_BOUNDS, method="highs")
+                               bounds=_WORKER_BOUNDS, method=_WORKER_LP_METHOD)
         if not (res_max_base.success and res_min_base.success):
             return k, None, None
 
@@ -136,9 +138,9 @@ def _run_direction_v3k(k):
     for bits, (A_c, b_c, per_class_deltas) in _WORKER_POLYTOPES_V3K.items():
         # A_correct width
         res_max_c = linprog(c=-u, A_ub=A_c, b_ub=b_c,
-                            bounds=_WORKER_BOUNDS, method="highs")
+                            bounds=_WORKER_BOUNDS, method=_WORKER_LP_METHOD)
         res_min_c = linprog(c= u, A_ub=A_c, b_ub=b_c,
-                            bounds=_WORKER_BOUNDS, method="highs")
+                            bounds=_WORKER_BOUNDS, method=_WORKER_LP_METHOD)
         if not (res_max_c.success and res_min_c.success):
             w_bits[bits] = None
             continue
@@ -152,9 +154,9 @@ def _run_direction_v3k(k):
             A_k = np.vstack([A_c, A_cls_k])
             b_k = np.concatenate([b_c, b_cls_k])
             res_max_k = linprog(c=-u, A_ub=A_k, b_ub=b_k,
-                                bounds=_WORKER_BOUNDS, method="highs")
+                                bounds=_WORKER_BOUNDS, method=_WORKER_LP_METHOD)
             res_min_k = linprog(c= u, A_ub=A_k, b_ub=b_k,
-                                bounds=_WORKER_BOUNDS, method="highs")
+                                bounds=_WORKER_BOUNDS, method=_WORKER_LP_METHOD)
             if res_max_k.success and res_min_k.success:
                 w_per_class[cls_k] = (-res_max_k.fun) - res_min_k.fun
             else:
@@ -196,12 +198,14 @@ def load_sample(data_path, sample_idx):
 
 _PS_POLYTOPES = None   # {bits: (A_c, b_c, {k: (A_cls_k, b_cls_k)})}
 _PS_BOUNDS    = None
+_PS_TL        = None   # seconds allowed to each emptiness LP
 
 
-def _init_worker_prescreen(polytopes_np, bounds):
-    global _PS_POLYTOPES, _PS_BOUNDS
+def _init_worker_prescreen(polytopes_np, bounds, time_limit):
+    global _PS_POLYTOPES, _PS_BOUNDS, _PS_TL
     _PS_POLYTOPES = polytopes_np
     _PS_BOUNDS    = bounds
+    _PS_TL        = time_limit
 
 
 def _run_prescreen(task):
@@ -217,25 +221,30 @@ def _run_prescreen(task):
     A_cls_k, b_cls_k = deltas[k]
     A_k = np.vstack([A_c, A_cls_k])
     b_k = np.concatenate([b_c, b_cls_k])
-    c0  = np.zeros(A_k.shape[1])
-    feas = linprog(c0, A_ub=A_k, b_ub=b_k, bounds=_PS_BOUNDS, method="highs")
+    c0   = np.zeros(A_k.shape[1])
+    opts = {} if _PS_TL is None else {"time_limit": float(_PS_TL)}
+
+    # Interior point FIRST. These are feasibility LPs (zero objective), the hardest
+    # kind for a simplex, which has to certify infeasibility with nothing to guide
+    # it. Measured on the CNN at b=4: IPM settles them in ~33-37 s uniformly, the
+    # simplex takes 194-600 s and can run away entirely — a smoke-test task hit the
+    # 4 h wall inside this loop. Both agree on every verdict; only the time differs.
+    feas = linprog(c0, A_ub=A_k, b_ub=b_k, bounds=_PS_BOUNDS,
+                   method="highs-ipm", options=opts)
 
     retried = False
     if not feas.success and feas.status != 2:
-        # HiGHS' default (dual simplex) returns status 4 with "HiGHS Status 0:
-        # Not Set" on some degenerate systems — it cannot certify infeasibility.
-        # Interior point settles those same instances, and faster: measured on
-        # MLP sample 0, b=16, classes 0/2/8 — simplex fails in ~43 s (with or
-        # without presolve), IPM proves infeasibility in ~11 s. The retry costs
-        # seconds; skipping it costs that class's full 2*n_directions LPs.
+        # Second opinion from the simplex. On the MLP it was the other way round
+        # (simplex returned status 4 "HiGHS Status 0: Not Set" where IPM decided),
+        # so neither method dominates and it is worth asking both before giving up.
         retried = True
         feas = linprog(c0, A_ub=A_k, b_ub=b_k, bounds=_PS_BOUNDS,
-                       method="highs-ipm")
+                       method="highs", options=opts)
     return bits, k, bool(feas.success), int(feas.status), retried
 
 
 def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_workers, n_classes,
-                    skip_base=False):
+                    skip_base=False, prescreen_time_limit=600.0, lp_method="highs"):
     """
     Estimate mean widths of A_base, A_correct (P2), and P3(k) for all k.
 
@@ -298,7 +307,7 @@ def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_work
     with ProcessPoolExecutor(
         max_workers=min(n_workers, max(1, len(ps_tasks))),
         initializer=_init_worker_prescreen,
-        initargs=(polytopes_np, bounds),
+        initargs=(polytopes_np, bounds, prescreen_time_limit),
     ) as ps_exec:
         n_retried = 0
         for bits, k, ok, status, retried in ps_exec.map(_run_prescreen, ps_tasks):
@@ -332,8 +341,8 @@ def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_work
     log.info(f"Pre-screening: {n_prescreened}/{n_total} P3(k) polytopes provably empty "
              f"→ skipped ({time.perf_counter() - t_ps:.1f}s)")
     if n_retried:
-        log.info(f"Pre-screening: {n_retried} LP(s) retried with interior point after the "
-                 f"simplex failed to decide.")
+        log.info(f"Pre-screening: {n_retried} LP(s) retried with the simplex after "
+                 f"interior point failed to decide.")
     if n_kept_on_failure:
         log.warning(f"Pre-screening: {n_kept_on_failure} polytope(s) KEPT because their "
                     f"feasibility LP failed without proving infeasibility (status != 2). "
@@ -352,7 +361,8 @@ def run_volumes_v3k(A_base, b_base, polytopes_dict, bounds, n_directions, n_work
     with ProcessPoolExecutor(
         max_workers=n_workers,
         initializer=_init_worker_v3k,
-        initargs=(A_base_np, b_base_np, polytopes_np, directions, bounds, skip_base),
+        initargs=(A_base_np, b_base_np, polytopes_np, directions, bounds, skip_base,
+                  lp_method),
     ) as executor:
         for k, w_base, w_bits in tqdm(
             executor.map(_run_direction_v3k, list(range(n_directions))),
@@ -452,6 +462,20 @@ def main():
     parser.add_argument("--bits_grid",    type=int, nargs="+", default=None,
                         help="Bit-widths to evaluate (default: 4 6 8 10 12 16). "
                              "Example: --bits_grid 4")
+    parser.add_argument("--lp_method", type=str, default="highs",
+                        choices=["highs", "highs-ds", "highs-ipm"],
+                        help="Solver for the DIRECTION LPs (default: highs). These "
+                             "produce the numbers the paper reports, so the default is "
+                             "left unchanged until an end-to-end comparison says "
+                             "otherwise. On one CNN b=4 direction, highs-ipm was 3-5x "
+                             "faster with an identical w(P2) to 15 decimals; that is "
+                             "one direction on one tile, not a validation.")
+    parser.add_argument("--prescreen_time_limit", type=float, default=600.0,
+                        help="Seconds allowed to each emptiness LP (default: 600). Very "
+                             "wide against the ~35 s interior point needs; it exists so "
+                             "that a runaway solve can never consume a whole task, as "
+                             "one did on a 4 h cluster job. A capped LP is treated as "
+                             "undecided, never as an empty polytope.")
     parser.add_argument("--skip_base",    action="store_true",
                         help="Do not compute the model-only polytope P1. P1 does not "
                              "appear in the generalized accuracy (19), which involves "
@@ -531,7 +555,9 @@ def main():
     log.info("\nRunning V3k volume experiment...")
     result = run_volumes_v3k(A_base, b_base, polytopes_dict, bounds,
                              args.n_directions, args.n_workers, n_classes,
-                             skip_base=args.skip_base)
+                             skip_base=args.skip_base,
+                             prescreen_time_limit=args.prescreen_time_limit,
+                             lp_method=args.lp_method)
 
     output = {
         "model_type":        args.model_type,
