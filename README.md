@@ -4,6 +4,11 @@ Code accompanying the paper **"Quantization Error via Polytope Volumes"** (2025,
 
 The central idea is to measure how much weight quantization shrinks the region of input space where a neural network classifies correctly. This region is a polytope (defined by ReLU activation constraints and classification constraints), and its size is estimated via a Monte Carlo mean-width estimator.
 
+**[PIPELINE.md](PIPELINE.md) explains what the computation does and why** — the three states
+a subpolytope can be in, why the work is split into two stages, what the mean-width lemma
+settles for free, and what it does not. Read it before the commands below if you want the
+reasoning rather than the recipe.
+
 ---
 
 ## Project structure
