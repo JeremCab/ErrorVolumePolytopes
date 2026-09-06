@@ -37,6 +37,8 @@ def main():
     ap.add_argument("--task_file", default="data/gen150/chebyshev_tasks.txt")
     ap.add_argument("--bits", type=int, nargs="+", default=[4, 6, 10, 16])
     ap.add_argument("--zero_tol", type=float, default=1e-6)
+    ap.add_argument("--n_dim", type=int, default=784,
+                    help="input dimension, for the volume-faithful rho^n weighting")
     a = ap.parse_args()
 
     reason = {}
@@ -133,6 +135,68 @@ def main():
             row += f"{100*frac:>9.1f}% ({n_all:>3})"
         print(row)
     print("   (n) = nombre de tuiles ou TOUS les incorrects sont nuls a ce seuil")
+
+    # ── 2c. four ways of weighting the same subpolytopes ──────────────────────
+    # (18) is a binary gate on a continuous quantity: it zeroes a subpolytope of
+    # exactly zero volume and keeps one of nearly zero volume at full weight. The
+    # continuous alternative is to weight by rho, which goes to 0 with the volume
+    # and needs no threshold at all — Jiri's "free parameter" objection disappears.
+    #
+    # What each weight can actually see, for a body similar to a ball of radius r
+    # (d = 2r, rho = r, V ∝ r^n, n = 784):
+    #   d          ∝ V^(1/n)   — a volume ratio of 2600 shows up as 1%
+    #   d.rho      ∝ V^(2/n)   — the same ratio shows up as 2%
+    #   rho        ∝ V^(1/n)   — same blindness as d, but it does vanish with volume
+    #   rho^n      ∝ V         — faithful, and numerically explosive: a 1% error on
+    #                            rho becomes a factor 2400 on the weight
+    # Only the last is volume-faithful, and it is the least usable. That tension is
+    # the point of the table, not an implementation detail.
+    def _lse(logs):
+        logs = np.asarray([l for l in logs if np.isfinite(l)])
+        if logs.size == 0:
+            return -np.inf
+        m = logs.max()
+        return m + np.log(np.exp(logs - m).sum())
+
+    print(f"\n{'='*78}\nPONDERATIONS (tuiles completes ; P2 exclu, seuls les P3^k comptent)\n{'='*78}")
+    print(f"{'b':>3} {'tuiles':>7} {'gamma[d]':>11} {'gamma[d.rho]':>14} "
+          f"{'gamma[rho]':>12} {'gamma[rho^n]':>14}")
+    print("-" * 64)
+    for b in a.bits:
+        T = [t for t in tiles if t["b"] == b
+             and all(p["status"] != "failed" for p in t["polys"])]
+        if not T:
+            print(f"{b:>3} {0:>7}   (aucune tuile complete)"); continue
+        num = {k: 0.0 for k in ("d", "dr", "r")}
+        den = {k: 0.0 for k in ("d", "dr", "r")}
+        log_c, log_a = [], []
+        for t in T:
+            for p in t["polys"]:
+                if p["polytope"] == "P2":
+                    continue
+                w = p["mean_width"] or 0.0
+                r = p["radius"]
+                r = r if (r is not None and r > 0) else 0.0
+                correct = (p["k"] == t["c"])
+                for key, val in (("d", w), ("dr", w * r), ("r", r)):
+                    den[key] += val
+                    if correct:
+                        num[key] += val
+                if r > 0:
+                    lv = a.n_dim * np.log(r)
+                    log_a.append(lv)
+                    if correct:
+                        log_c.append(lv)
+        g_vol = float(np.exp(_lse(log_c) - _lse(log_a))) if log_a else float("nan")
+        f = lambda k: num[k] / den[k] if den[k] else float("nan")
+        print(f"{b:>3} {len(T):>7} {f('d'):>11.4f} {f('dr'):>14.4f} "
+              f"{f('r'):>12.4f} {g_vol:>14.4f}")
+    print("\n   gamma[d]     : la ponderation actuelle, sans exclusion"
+          "\n   gamma[d.rho] : ponderation continue — remplace la porte binaire de (18)"
+          "\n                  sans aucun seuil, mais ne voit le volume qu'en V^(2/n)"
+          "\n   gamma[rho]   : rho comme mesure de taille a la place de la largeur"
+          "\n   gamma[rho^n] : fidele au volume (logsumexp), et donc instable — une"
+          "\n                  erreur de 1%% sur rho y devient un facteur 2400")
 
     # ── 3. radii, to see whether the verdict is clear-cut or a threshold call ──
     print(f"\n{'='*62}\nRAYONS (sous-polytopes incorrects convergees)\n{'='*62}")
