@@ -106,6 +106,34 @@ def main():
             print("   ^ 100% signifierait que la tolerance lache avait raison ;"
                   "\n     0% que la tolerance serree avait raison.")
 
+    # ── 2b. the same verdicts across a range of zero_tol ──────────────────────
+    # Jiri (MAIL_23, 5 Sep 2026) argues the small radii are numerical error
+    # accumulated over hundreds of thousands of float32 operations while the true
+    # radius is zero, and that (18) should be implemented with eps = 5e-5 or even
+    # 1e-4. Our default of 1e-6 is a hundred times stricter, and the measured radii
+    # sit exactly in the disputed band — so the verdict must be reported as a
+    # function of the threshold, not at one value of it.
+    print(f"\n{'='*62}\nVERDICTS vs zero_tol  (% de sous-polytopes incorrects NULS)\n{'='*62}")
+    TOLS = (1e-8, 1e-6, 1e-5, 5e-5, 1e-4, 5e-4)
+    print(f"{'zero_tol':>10} {'caseB':>16} {'xcheck':>16}   (le lemme predit 100% en xcheck)")
+    for zt in TOLS:
+        row = f"{zt:>10.0e}"
+        for why in ("caseB", "xcheck"):
+            T = [t for t in tiles if t["why"] == why
+                 and all(p["status"] != "failed" for p in t["polys"])]
+            inc = [p for t in T for p in t["polys"]
+                   if p["polytope"] != "P2" and p["k"] != t["c"]]
+            if not inc:
+                row += f"{'--':>16}"; continue
+            frac = np.mean([p["radius"] is not None and p["radius"] <= zt for p in inc])
+            n_all = sum(1 for t in T
+                        if (i := [p for p in t["polys"]
+                                  if p["polytope"] != "P2" and p["k"] != t["c"]])
+                        and all(p["radius"] is not None and p["radius"] <= zt for p in i))
+            row += f"{100*frac:>9.1f}% ({n_all:>3})"
+        print(row)
+    print("   (n) = nombre de tuiles ou TOUS les incorrects sont nuls a ce seuil")
+
     # ── 3. radii, to see whether the verdict is clear-cut or a threshold call ──
     print(f"\n{'='*62}\nRAYONS (sous-polytopes incorrects convergees)\n{'='*62}")
     for why in ("caseB", "xcheck"):
