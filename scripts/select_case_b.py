@@ -51,6 +51,30 @@ def load_tiles(results_dir: Path, bits):
                    "V2": float(V2), "W": W, "gap": abs(W[c] - V2) / V2}
 
 
+def gamma19_min(T, tol):
+    """(19) with (18) applied wherever the lemma proves the volume is zero.
+
+    In a case-A tile some k* has d(P3^k*) = d(P2), so P3^k* = P2 and every other
+    subpolytope has empty interior: d_0 zeroes them, and the tile contributes
+    V3^k* to both sums (i.e. 1 if k* = c, else 0). In a case-B tile the lemma is
+    silent, so nothing is excluded. Stage 2 can only remove further terms from
+    the denominator, so this is a lower bound on the gamma of (19).
+
+    Returns (gamma, share of the denominator still open in case-B tiles).
+    """
+    num = den = den_B = 0.0
+    for t in T:
+        if t["gap"] <= tol:
+            w = t["W"][t["c"]]
+            num += w; den += w
+        else:
+            num += t["W"][t["c"]]
+            den += sum(t["W"]); den_B += sum(t["W"])
+    if not den:
+        return float("nan"), float("nan")
+    return num / den, den_B / den
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -96,19 +120,7 @@ def main():
         # nothing, so nothing is excluded there. Since applying (18) to those
         # tiles could only REMOVE terms from the denominator, the result is a
         # rigorous LOWER bound on the gamma that stage 2 will produce.
-        num_x = den_x = 0.0
-        den_B = 0.0                      # how much of the denominator is still open
-        for t in T:
-            if t["gap"] <= a.tol:        # case A — lemma applies
-                w = t["W"][t["c"]]       # = V3^k* (k* is c iff the gap is small)
-                den_x += w
-                num_x += w
-            else:                        # case B — no exclusion, denominator intact
-                num_x += t["W"][t["c"]]
-                den_x += sum(t["W"])
-                den_B += sum(t["W"])
-        g_x  = num_x / den_x if den_x else float("nan")
-        open_frac = den_B / den_x if den_x else float("nan")
+        g_x, open_frac = gamma19_min(T, a.tol)
 
         print(f"{b:>3} {len(T):>7} {len(A):>7} {len(T)-len(A):>7} "
               f"{g_l:>12.4f} {g_m:>15.4f} {g_x:>13.4f} {100*open_frac:>9.1f}% "
@@ -129,15 +141,25 @@ def main():
           "\n                 how much room stage 2 has left to change the answer.")
 
     if a.tol_scan:
-        print(f"\nsensibilite au seuil (% de cas A) :")
-        print("   tol   " + "".join(f"  b={b:<4}" for b in a.bits))
-        for t in (1e-3, 1e-4, 1e-5, 1e-6, 1e-8, 1e-10):
-            row = f"  {t:.0e}  "
-            for b in a.bits:
-                T = [x for x in tiles if x["b"] == b]
-                row += f"  {100*np.mean([x['gap'] <= t for x in T]):5.1f} " if T else "    --  "
-            print(row)
-        print("   a flat row means the verdict does not depend on where you cut.")
+        TOLS = (1e-3, 1e-4, 1e-5, 1e-6, 1e-8, 1e-10)
+        for label, fn, fmt in (("% de cas A",
+                                lambda T, t: 100 * np.mean([x["gap"] <= t for x in T]),
+                                "{:6.1f}"),
+                               ("gamma_19_min",
+                                lambda T, t: gamma19_min(T, t)[0],
+                                "{:6.3f}")):
+            print(f"\nsensibilite au seuil ({label}) :")
+            print("   tol   " + "".join(f"  b={b:<5}" for b in a.bits))
+            for t in TOLS:
+                row = f"  {t:.0e}  "
+                for b in a.bits:
+                    T = [x for x in tiles if x["b"] == b]
+                    row += "  " + fmt.format(fn(T, t)) + " " if T else "     --  "
+                print(row)
+        print("\n   A flat gamma_19_min row is what matters: it says the reported value"
+              "\n   does not depend on where the threshold is put. The case-A rate can"
+              "\n   move without the gamma moving, if the tiles that change side carry"
+              "\n   little weight.")
 
     # ── stage-2 task table ────────────────────────────────────────────────────
     caseB = [t for t in tiles if t["gap"] > a.tol]
