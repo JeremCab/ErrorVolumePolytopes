@@ -68,6 +68,14 @@ def main():
                     help="stage-1 results root; b{BB}/volumes_sample{I}.json is read "
                          "to learn which classes are non-empty")
     ap.add_argument("--output_dir", required=True)
+    ap.add_argument("--p2_only", action="store_true",
+                    help="Compute the radius of P2 alone, not of the P3(k). One LP per "
+                         "tile instead of ~3, which is what makes it affordable over the "
+                         "whole campaign. rho(P2) says whether the TILE is degenerate — a "
+                         "flat P2 has zero volume, so it carries zero weight in the ideal "
+                         "volume GACC while carrying a full one in the mean-width "
+                         "surrogate. That is a different question from whether a given "
+                         "P3(k) is zero-volume, which still needs its own radius.")
     ap.add_argument("--time_limit", type=float, default=3600.0)
     ap.add_argument("--n_workers",  type=int,
                     default=int(os.environ.get("SLURM_CPUS_PER_TASK", 4)))
@@ -111,8 +119,9 @@ def main():
 
     tn = lambda t: t.detach().cpu().numpy()
     polys = {"P2": (tn(A_c), tn(b_c))}
-    for k in non_empty:
-        polys[f"P3_k{k}"] = (tn(per[k][0]), tn(per[k][1]))
+    if not a.p2_only:
+        for k in non_empty:
+            polys[f"P3_k{k}"] = (tn(per[k][0]), tn(per[k][1]))
 
     records = []
     with ProcessPoolExecutor(max_workers=min(a.n_workers, len(polys)),
