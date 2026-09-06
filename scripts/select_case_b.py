@@ -97,9 +97,9 @@ def main():
 
     # ── gammas and case rates, per b ──────────────────────────────────────────
     print(f"\n{'b':>3} {'tuiles':>7} {'cas A':>7} {'cas B':>7} "
-          f"{'gamma_lemme':>12} {'gamma_larg.moy':>15} {'gamma_19_min':>13} "
-          f"{'denom.ouv':>10} {'ecart median':>12}")
-    print("-" * 95)
+          f"{'gamma_lemme':>12} {'gamma_larg.moy':>15} {'gamma_19_inf':>13} "
+          f"{'gamma_19_min':>13} {'denom.ouv':>10} {'ecart median':>12}")
+    print("-" * 108)
     report = {"tol": a.tol, "per_b": {}}
     for b in a.bits:
         T = [t for t in tiles if t["b"] == b]
@@ -122,17 +122,33 @@ def main():
         # rigorous LOWER bound on the gamma that stage 2 will produce.
         g_x, open_frac = gamma19_min(T, a.tol)
 
+        # A RIGOROUS lower bound on (19), using only the safe half of the lemma.
+        # Numerator: V3^c counted only when V3^c = V2, i.e. when P3^c = P2 and its
+        # volume is therefore positive — so that term equals (19)'s exactly, and is
+        # 0 otherwise, hence never larger. Denominator: nothing excluded, so it is
+        # never smaller than (19)'s. Smaller numerator over larger denominator, so
+        # gamma_min' <= gamma_(19), with no Chebyshev radius involved.
+        # It does NOT use the half of the lemma the cross-check refuted (the other
+        # classes having zero volume), which is what invalidates gamma_lemma.
+        num_p = sum(t["W"][t["c"]] for t in T if t["gap"] <= a.tol)
+        den_p = sum(sum(t["W"]) for t in T)
+        g_p = num_p / den_p if den_p else float("nan")
+
         print(f"{b:>3} {len(T):>7} {len(A):>7} {len(T)-len(A):>7} "
-              f"{g_l:>12.4f} {g_m:>15.4f} {g_x:>13.4f} {100*open_frac:>9.1f}% "
-              f"{med:>12.1e}")
+              f"{g_l:>12.4f} {g_m:>15.4f} {g_p:>13.4f} {g_x:>13.4f} "
+              f"{100*open_frac:>9.1f}% {med:>12.1e}")
         report["per_b"][str(b)] = {
             "n_tiles": len(T), "n_case_A": len(A), "n_case_B": len(T) - len(A),
             "gamma_lemma": g_l, "gamma_meanwidth_no_exclusion": g_m,
-            "gamma_19_lower_bound": g_x, "denominator_still_open_frac": open_frac,
+            "gamma_19_lower_bound": g_x, "gamma_19_rigorous_inf": g_p, "denominator_still_open_frac": open_frac,
             "median_gap": med}
 
     print("\ngamma_larg.moy : (19) with NO zero-volume exclusion at all (d_0 = d)."
           "\ngamma_lemme    : a tile counts fully iff the correct class fills it, 0 otherwise."
+          "\ngamma_19_inf   : RIGOROUS lower bound on (19). Uses only the safe half of the"
+          "\n                 lemma (V3^c = V2 => P3^c = P2 => positive volume), never the half"
+          "\n                 the cross-check refuted. No Chebyshev radius needed. Harsh: no"
+          "\n                 partial credit in the numerator, no exclusion in the denominator."
           "\ngamma_19_min   : (19) with (18) applied wherever the LEMMA PROVES the volume is"
           "\n                 zero (case A), nothing excluded in case B. Stage 2 can only"
           "\n                 remove further terms from the denominator, so the final gamma"
