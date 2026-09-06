@@ -73,8 +73,9 @@ def main():
 
     # ── gammas and case rates, per b ──────────────────────────────────────────
     print(f"\n{'b':>3} {'tuiles':>7} {'cas A':>7} {'cas B':>7} "
-          f"{'gamma_lemme':>12} {'gamma_larg.moy':>15} {'ecart median':>13}")
-    print("-" * 72)
+          f"{'gamma_lemme':>12} {'gamma_larg.moy':>15} {'gamma_19_min':>13} "
+          f"{'denom.ouv':>10} {'ecart median':>12}")
+    print("-" * 95)
     report = {"tol": a.tol, "per_b": {}}
     for b in a.bits:
         T = [t for t in tiles if t["b"] == b]
@@ -86,16 +87,46 @@ def main():
         g_l = num_l / den_l if den_l else float("nan")
         g_m = num_m / den_m if den_m else float("nan")
         med = float(np.median([t["gap"] for t in T]))
+
+        # (19) with (18) applied WHEREVER THE LEMMA PROVES IT — no LP needed.
+        # In a case-A tile some k* has d(P3^k*) = d(P2), so P3^k* = P2 and every
+        # other subpolytope has empty interior, hence zero volume: d_0 zeroes them
+        # and the tile contributes V3^k* to the denominator and V3^c to the
+        # numerator (i.e. 1 if k* = c, else 0). In a case-B tile the lemma says
+        # nothing, so nothing is excluded there. Since applying (18) to those
+        # tiles could only REMOVE terms from the denominator, the result is a
+        # rigorous LOWER bound on the gamma that stage 2 will produce.
+        num_x = den_x = 0.0
+        den_B = 0.0                      # how much of the denominator is still open
+        for t in T:
+            if t["gap"] <= a.tol:        # case A — lemma applies
+                w = t["W"][t["c"]]       # = V3^k* (k* is c iff the gap is small)
+                den_x += w
+                num_x += w
+            else:                        # case B — no exclusion, denominator intact
+                num_x += t["W"][t["c"]]
+                den_x += sum(t["W"])
+                den_B += sum(t["W"])
+        g_x  = num_x / den_x if den_x else float("nan")
+        open_frac = den_B / den_x if den_x else float("nan")
+
         print(f"{b:>3} {len(T):>7} {len(A):>7} {len(T)-len(A):>7} "
-              f"{g_l:>12.4f} {g_m:>15.4f} {med:>13.1e}")
+              f"{g_l:>12.4f} {g_m:>15.4f} {g_x:>13.4f} {100*open_frac:>9.1f}% "
+              f"{med:>12.1e}")
         report["per_b"][str(b)] = {
             "n_tiles": len(T), "n_case_A": len(A), "n_case_B": len(T) - len(A),
             "gamma_lemma": g_l, "gamma_meanwidth_no_exclusion": g_m,
+            "gamma_19_lower_bound": g_x, "denominator_still_open_frac": open_frac,
             "median_gap": med}
 
-    print("\ngamma_larg.moy is (19) WITHOUT the zero-volume exclusion — d_0 = d "
-          "\neverywhere, since the radii are what stage 2 is about to compute."
-          "\ngamma_lemme is a LOWER bound: a split tile (case B) gets no credit.")
+    print("\ngamma_larg.moy : (19) with NO zero-volume exclusion at all (d_0 = d)."
+          "\ngamma_lemme    : a tile counts fully iff the correct class fills it, 0 otherwise."
+          "\ngamma_19_min   : (19) with (18) applied wherever the LEMMA PROVES the volume is"
+          "\n                 zero (case A), nothing excluded in case B. Stage 2 can only"
+          "\n                 remove further terms from the denominator, so the final gamma"
+          "\n                 is >= this value. This is the best estimate available now."
+          "\ndenom.ouv      : share of the denominator still sitting in case-B tiles, i.e."
+          "\n                 how much room stage 2 has left to change the answer.")
 
     if a.tol_scan:
         print(f"\nsensibilite au seuil (% de cas A) :")
