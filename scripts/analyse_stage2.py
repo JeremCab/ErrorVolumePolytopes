@@ -160,8 +160,9 @@ def main():
 
     print(f"\n{'='*78}\nPONDERATIONS (tuiles completes ; P2 exclu, seuls les P3^k comptent)\n{'='*78}")
     print(f"{'b':>3} {'tuiles':>7} {'gamma[d]':>11} {'gamma[d.rho]':>14} "
-          f"{'gamma[rho]':>12} {'gamma[rho^n]':>14}")
-    print("-" * 64)
+          f"{'gamma[rho]':>12} {'gamma[rho^n]':>14} || "
+          f"{'gamma_moy[d]':>14} {'gamma_moy[rho]':>16}")
+    print("-" * 100)
     for b in a.bits:
         T = [t for t in tiles if t["b"] == b
              and all(p["status"] != "failed" for p in t["polys"])]
@@ -170,7 +171,19 @@ def main():
         num = {k: 0.0 for k in ("d", "dr", "r")}
         den = {k: 0.0 for k in ("d", "dr", "r")}
         log_c, log_a = [], []
+        # Per-tile ratios, averaged unweighted. Dividing a tile's weights by its
+        # own total leaves that tile's ratio untouched and removes the weight it
+        # carries relative to the others — so the ratio of sums becomes the mean of
+        # ratios. Each term is dimensionless and in [0,1], hence comparable across
+        # b without rho's scale entering. The case for it: a 1% difference in mean
+        # width answers to a factor 2600 in volume, so weighting tiles by these
+        # sizes ranks them on a quantity that cannot rank them, which injects noise
+        # rather than information. The case against: it is no longer the volume
+        # fraction of P1, and it is a change to (19), which Jiri wrote explicitly
+        # as a size-weighted average.
+        ratio_d, ratio_r = [], []
         for t in T:
+            tn_d = td_d = tn_r = td_r = 0.0
             for p in t["polys"]:
                 if p["polytope"] == "P2":
                     continue
@@ -182,21 +195,39 @@ def main():
                     den[key] += val
                     if correct:
                         num[key] += val
+                td_d += w; td_r += r
+                if correct:
+                    tn_d += w; tn_r += r
                 if r > 0:
                     lv = a.n_dim * np.log(r)
                     log_a.append(lv)
                     if correct:
                         log_c.append(lv)
+            if td_d > 0: ratio_d.append(tn_d / td_d)
+            if td_r > 0: ratio_r.append(tn_r / td_r)
         g_vol = float(np.exp(_lse(log_c) - _lse(log_a))) if log_a else float("nan")
         f = lambda k: num[k] / den[k] if den[k] else float("nan")
+        m = lambda v: float(np.mean(v)) if v else float("nan")
         print(f"{b:>3} {len(T):>7} {f('d'):>11.4f} {f('dr'):>14.4f} "
-              f"{f('r'):>12.4f} {g_vol:>14.4f}")
+              f"{f('r'):>12.4f} {g_vol:>14.4f} || "
+              f"{m(ratio_d):>14.4f} {m(ratio_r):>16.4f}")
     print("\n   gamma[d]     : la ponderation actuelle, sans exclusion"
           "\n   gamma[d.rho] : ponderation continue — remplace la porte binaire de (18)"
           "\n                  sans aucun seuil, mais ne voit le volume qu'en V^(2/n)"
           "\n   gamma[rho]   : rho comme mesure de taille a la place de la largeur"
           "\n   gamma[rho^n] : fidele au volume (logsumexp), et donc instable — une"
-          "\n                  erreur de 1%% sur rho y devient un facteur 2400")
+          "\n                  erreur de 1%% sur rho y devient un facteur 2400"
+          "\n   gamma_moy[.] : MOYENNE des rapports par tuile, au lieu du rapport des"
+          "\n                  sommes. Chaque tuile pese pareil ; les termes sont sans"
+          "\n                  dimension et dans [0,1], donc comparables entre b sans que"
+          "\n                  l'echelle de rho intervienne."
+          "\n\n   Si gamma_moy diverge de gamma, c'est la PONDERATION PAR LA TAILLE qui"
+          "\n   porte le resultat — or on sait qu'elle classe les tuiles sur une quantite"
+          "\n   incapable de les classer (1%% de largeur = facteur 2600 en volume)."
+          "\n   Reserve valable pour les deux : l'echantillon de tuiles n'est deja pas"
+          "\n   proportionnel au volume (un representant par classe, puis 5 choisis par"
+          "\n   diversite), donc aucune ponderation posterieure ne rend la vraie fraction"
+          "\n   volumique de P1.")
 
     # ── 3. radii, to see whether the verdict is clear-cut or a threshold call ──
     print(f"\n{'='*62}\nRAYONS (sous-polytopes incorrects convergees)\n{'='*62}")
