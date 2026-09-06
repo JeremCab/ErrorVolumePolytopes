@@ -87,6 +87,63 @@ def main():
         row += f"{100*frac:>12.1f}%"
         print(row)
 
+    # ── radii per b, and the scale-free ratio ────────────────────────────────
+    # An absolute zero_tol is only comparable across b if the polytopes have the
+    # same scale, and they do not: at b=10 every radius, the correct one included,
+    # sits below 5e-4. The dimensionless quantity is rho(P3^k)/rho(P2) — each tile
+    # normalised by its own correct polytope.
+    print(f"\n{'='*76}\nRAYONS par b (percentiles)\n{'='*76}")
+    print(f"{'b':>3} {'rho(P2) median':>15} {'rho(P3^k faux) p10 / p50 / p90':>38}")
+    for b in a.bits:
+        T = data[b]
+        if not T: continue
+        p2 = [p["radius"] for d in T for p in d["polytopes"]
+              if p["polytope"] == "P2" and p["radius"] is not None]
+        inc = [p["radius"] for d in T for p in d["polytopes"]
+               if p["polytope"] != "P2" and p["k"] != d["class_c"]
+               and p["radius"] is not None]
+        if not p2 or not inc: continue
+        print(f"{b:>3} {np.median(p2):>15.3e} "
+              f"{np.percentile(inc,10):>12.2e} {np.percentile(inc,50):>12.2e} "
+              f"{np.percentile(inc,90):>12.2e}")
+
+    print(f"\n{'='*76}\nRAPPORT rho(P3^k)/rho(P2) — sans dimension, comparable entre b"
+          f"\n{'='*76}")
+    print(f"{'b':>3} {'p10':>10} {'p50':>10} {'p90':>10}   "
+          f"{'gamma avec seuil relatif':>30}")
+    RELS = (1e-3, 1e-2, 1e-1)
+    print(f"{'':>3} {'':>10} {'':>10} {'':>10}   " +
+          "".join(f"{'r<' + f'{r:.0e}':>10}" for r in RELS))
+    for b in a.bits:
+        T = data[b]
+        if not T: continue
+        ratios = []
+        for d in T:
+            r2 = next((p["radius"] for p in d["polytopes"] if p["polytope"] == "P2"), None)
+            if not r2 or r2 <= 0: continue
+            for p in d["polytopes"]:
+                if p["polytope"] != "P2" and p["k"] != d["class_c"] and p["radius"] is not None:
+                    ratios.append(p["radius"] / r2)
+        if not ratios: continue
+        row = (f"{b:>3} {np.percentile(ratios,10):>10.2e} "
+               f"{np.percentile(ratios,50):>10.2e} {np.percentile(ratios,90):>10.2e}   ")
+        for rel in RELS:
+            num = den = 0.0
+            for d in T:
+                c = d["class_c"]
+                r2 = next((p["radius"] for p in d["polytopes"] if p["polytope"] == "P2"), None)
+                if not r2 or r2 <= 0: continue
+                for p in d["polytopes"]:
+                    if p["polytope"] == "P2": continue
+                    r = p["radius"]
+                    if r is None or r / r2 <= rel:      # zero volume, relatively
+                        continue
+                    w = p["mean_width"] or 0.0
+                    den += w
+                    if p["k"] == c: num += w
+            row += f"{num/den if den else float('nan'):>10.4f}"
+        print(row)
+
     print("\nLecture : la tendance ne peut changer que si l'exclusion mord DIFFEREMMENT"
           "\nselon b. Une exclusion uniforme redimensionne le denominateur sans toucher"
           "\na l'ordre. Comparer la colonne 'sans exclusion' aux colonnes zt=... sur les"
