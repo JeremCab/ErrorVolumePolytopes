@@ -161,8 +161,9 @@ def main():
     print(f"\n{'='*78}\nPONDERATIONS (tuiles completes ; P2 exclu, seuls les P3^k comptent)\n{'='*78}")
     print(f"{'b':>3} {'tuiles':>7} {'gamma[d]':>11} {'gamma[d.rho]':>14} "
           f"{'gamma[rho]':>12} {'gamma[rho^n]':>14} || "
-          f"{'gamma_moy[d]':>14} {'gamma_moy[rho]':>16}")
-    print("-" * 100)
+          f"{'gamma_moy[d]':>14} {'gamma_moy[rho]':>16} || "
+          f"{'gamma[argmax]':>12} {'argmax=c':>11}")
+    print("-" * 128)
     for b in a.bits:
         T = [t for t in tiles if t["b"] == b
              and all(p["status"] != "failed" for p in t["polys"])]
@@ -181,8 +182,30 @@ def main():
         # rather than information. The case against: it is no longer the volume
         # fraction of P1, and it is a change to (19), which Jiri wrote explicitly
         # as a size-weighted average.
+        # Keep only the subpolytope with the LARGEST rho, weight it by its mean
+        # width. Justification: vol ∝ rho^n with n = 784, so a radius ratio of 11
+        # is a volume ratio of 1e820 — the largest inradius carries essentially
+        # all of the tile's volume. Dropping the others is therefore not an ad hoc
+        # simplification but what the volume weighting gives in the limit.
+        # It uses only the ORDER of the radii, never their magnitudes, which is the
+        # robust part: a ranking survives numerical error where rho^n amplifies a
+        # 1% error into a factor 2400. Same structure as the refuted lemma
+        # criterion — an indicator per tile, weighted by tile size — with the
+        # criterion the volume actually dictates instead of mean-width equality.
+        argmax_num = argmax_den = 0.0
+        n_argmax_c = n_argmax_tot = 0
         ratio_d, ratio_r = [], []
         for t in T:
+            inc = [p for p in t["polys"] if p["polytope"] != "P2"
+                   and p["radius"] is not None]
+            if inc:
+                best = max(inc, key=lambda p: p["radius"])
+                w_best = best["mean_width"] or 0.0
+                argmax_den += w_best
+                n_argmax_tot += 1
+                if best["k"] == t["c"]:
+                    argmax_num += w_best
+                    n_argmax_c += 1
             tn_d = td_d = tn_r = td_r = 0.0
             for p in t["polys"]:
                 if p["polytope"] == "P2":
@@ -208,9 +231,12 @@ def main():
         g_vol = float(np.exp(_lse(log_c) - _lse(log_a))) if log_a else float("nan")
         f = lambda k: num[k] / den[k] if den[k] else float("nan")
         m = lambda v: float(np.mean(v)) if v else float("nan")
+        g_am = argmax_num / argmax_den if argmax_den else float("nan")
+        rate = 100 * n_argmax_c / n_argmax_tot if n_argmax_tot else float("nan")
         print(f"{b:>3} {len(T):>7} {f('d'):>11.4f} {f('dr'):>14.4f} "
               f"{f('r'):>12.4f} {g_vol:>14.4f} || "
-              f"{m(ratio_d):>14.4f} {m(ratio_r):>16.4f}")
+              f"{m(ratio_d):>14.4f} {m(ratio_r):>16.4f} || "
+              f"{g_am:>12.4f} {rate:>10.1f}%")
     print("\n   gamma[d]     : la ponderation actuelle, sans exclusion"
           "\n   gamma[d.rho] : ponderation continue — remplace la porte binaire de (18)"
           "\n                  sans aucun seuil, mais ne voit le volume qu'en V^(2/n)"
@@ -224,6 +250,16 @@ def main():
           "\n\n   Si gamma_moy diverge de gamma, c'est la PONDERATION PAR LA TAILLE qui"
           "\n   porte le resultat — or on sait qu'elle classe les tuiles sur une quantite"
           "\n   incapable de les classer (1%% de largeur = facteur 2600 en volume)."
+          "\n   gamma[argmax]: on ne garde par tuile QUE le P3^k de plus grand rho, pondere"
+          "\n                  par sa largeur. En dimension 784 ce sous-polytope porte"
+          "\n                  quasiment tout le volume de la tuile (un rapport de rayons"
+          "\n                  de 11 = un rapport de volumes de 1e820), donc c'est la"
+          "\n                  reponse volumique a la limite — et elle n'utilise que"
+          "\n                  l'ORDRE des rayons, pas leurs valeurs, ce qui la rend"
+          "\n                  robuste la ou rho^n explose."
+          "\n   argmax=c     : part des tuiles ou le plus grand rayon est la bonne classe."
+          "\n                  A b=6 et b=10 ce classement est douteux : les rapports"
+          "\n                  rho(P3^k)/rho(P2) y valent 1.00, donc l'argmax est du bruit."
           "\n   Reserve valable pour les deux : l'echantillon de tuiles n'est deja pas"
           "\n   proportionnel au volume (un representant par classe, puis 5 choisis par"
           "\n   diversite), donc aucune ponderation posterieure ne rend la vraie fraction"
