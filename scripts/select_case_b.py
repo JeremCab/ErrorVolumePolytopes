@@ -5,9 +5,17 @@ report both gamma variants, and emit the task table for the Chebyshev stage.
 
 The criterion comes from the lemma (equal mean width => same set): if some class
 k satisfies d(P3^k) = d(P2), then P3^k = P2 and every other subpolytope has zero
-volume, so (18) is settled without a single Chebyshev LP. Testing it on the
-CORRECT class alone is enough — the indicator 1[V3^c = V2] is 0 whether the
-equality is carried by another class or by none.
+volume, so (18) is settled without a single Chebyshev LP.
+
+The lemma is tested on EVERY class, not only on the correct one. An earlier
+version tested c alone, on the ground that the indicator 1[V3^c = V2] is 0
+whether the equality is carried by another class or by none. That is true of
+gamma_lemma and false of everything else: a tile filled by some k' != c is a
+genuine case A — the lemma proves that every other subpolytope, P3^c included,
+has zero volume — so testing c alone filed it as case B, sent it to stage 2 for
+nothing, and let W[c] into the numerator of gamma_19_min where d_0 makes it 0.
+Since the P3^k partition P2, W[k] <= V2 for every k up to solver noise, so the
+only class that can carry the equality is argmax_k W[k].
 
 The tolerance is not a free parameter: the same random directions are used for
 P2 and for each P3^k, so when the two bodies coincide their widths agree to
@@ -47,8 +55,11 @@ def load_tiles(results_dir: Path, bits):
                 print(f"  [WARN] {f.name} (b={b}): unusable V2, skipped")
                 continue
             W = [0.0 if (x is None or not np.isfinite(x)) else float(x) for x in W]
+            ks = int(np.argmax(W))         # the only class that can fill P2
             yield {"b": b, "aug_idx": int(f.stem.split("sample")[1]), "c": c,
-                   "V2": float(V2), "W": W, "gap": abs(W[c] - V2) / V2}
+                   "V2": float(V2), "W": W, "ks": ks,
+                   "gap":   abs(W[ks] - V2) / V2,     # case A/B: is P2 filled at all?
+                   "gap_c": abs(W[c]  - V2) / V2}     # gamma_lemma: is it filled by c?
 
 
 def gamma19_min(T, tol):
@@ -60,13 +71,19 @@ def gamma19_min(T, tol):
     silent, so nothing is excluded. Stage 2 can only remove further terms from
     the denominator, so this is a lower bound on the gamma of (19).
 
+    NOTE the numerator when k* != c: d_0(P3^c) = 0 there, so the tile scores 0
+    even though W[c] may be large — a zero-volume face keeps a nearly maximal
+    mean width, which is precisely the contamination (18) exists to remove.
+
     Returns (gamma, share of the denominator still open in case-B tiles).
     """
     num = den = den_B = 0.0
     for t in T:
         if t["gap"] <= tol:
-            w = t["W"][t["c"]]
-            num += w; den += w
+            w = t["W"][t["ks"]]
+            den += w
+            if t["ks"] == t["c"]:
+                num += w
         else:
             num += t["W"][t["c"]]
             den += sum(t["W"]); den_B += sum(t["W"])
@@ -96,17 +113,22 @@ def main():
         raise SystemExit(f"[ABORT] no stage-1 result under {a.results_dir}")
 
     # ── gammas and case rates, per b ──────────────────────────────────────────
-    print(f"\n{'b':>3} {'tuiles':>7} {'cas A':>7} {'cas B':>7} "
+    print(f"\n{'b':>3} {'tuiles':>7} {'cas A':>7} {'A par c':>8} {'A par k!=c':>11} "
+          f"{'cas B':>7} "
           f"{'gamma_lemme':>12} {'gamma_larg.moy':>15} {'gamma_19_inf':>13} "
           f"{'gamma_19_min':>13} {'denom.ouv':>10} {'ecart median':>12}")
-    print("-" * 108)
+    print("-" * 128)
     report = {"tol": a.tol, "per_b": {}}
     for b in a.bits:
         T = [t for t in tiles if t["b"] == b]
         if not T:
             continue
-        A = [t for t in T if t["gap"] <= a.tol]
-        num_l = sum(t["V2"] for t in A);           den_l = sum(t["V2"] for t in T)
+        A   = [t for t in T if t["gap"] <= a.tol]        # P2 filled by SOME class
+        A_c = [t for t in A if t["ks"] == t["c"]]        # ... and that class is c
+        A_w = [t for t in A if t["ks"] != t["c"]]        # ... and it is not
+        # gamma_lemma keeps its own definition, 1[V3^c = V2], tested on c.
+        num_l = sum(t["V2"] for t in T if t["gap_c"] <= a.tol)
+        den_l = sum(t["V2"] for t in T)
         num_m = sum(t["W"][t["c"]] for t in T);    den_m = sum(sum(t["W"]) for t in T)
         g_l = num_l / den_l if den_l else float("nan")
         g_m = num_m / den_m if den_m else float("nan")
@@ -130,20 +152,26 @@ def main():
         # gamma_min' <= gamma_(19), with no Chebyshev radius involved.
         # It does NOT use the half of the lemma the cross-check refuted (the other
         # classes having zero volume), which is what invalidates gamma_lemma.
-        num_p = sum(t["W"][t["c"]] for t in T if t["gap"] <= a.tol)
+        num_p = sum(t["W"][t["c"]] for t in T if t["gap_c"] <= a.tol)
         den_p = sum(sum(t["W"]) for t in T)
         g_p = num_p / den_p if den_p else float("nan")
 
-        print(f"{b:>3} {len(T):>7} {len(A):>7} {len(T)-len(A):>7} "
+        print(f"{b:>3} {len(T):>7} {len(A):>7} {len(A_c):>8} {len(A_w):>11} "
+              f"{len(T)-len(A):>7} "
               f"{g_l:>12.4f} {g_m:>15.4f} {g_p:>13.4f} {g_x:>13.4f} "
               f"{100*open_frac:>9.1f}% {med:>12.1e}")
         report["per_b"][str(b)] = {
             "n_tiles": len(T), "n_case_A": len(A), "n_case_B": len(T) - len(A),
+            "n_case_A_by_c": len(A_c), "n_case_A_by_wrong_class": len(A_w),
             "gamma_lemma": g_l, "gamma_meanwidth_no_exclusion": g_m,
             "gamma_19_lower_bound": g_x, "gamma_19_rigorous_inf": g_p, "denominator_still_open_frac": open_frac,
             "median_gap": med}
 
-    print("\ngamma_larg.moy : (19) with NO zero-volume exclusion at all (d_0 = d)."
+    print("\ncas A          : some class fills P2 (argmax_k W[k]), so the lemma settles (18)."
+          "\nA par k!=c     : case-A tiles filled by a WRONG class. The lemma proves d_0(P3^c)=0"
+          "\n                 there, so they score 0 in gamma_19_min. Testing c alone used to"
+          "\n                 file them as case B and let W[c] into the numerator."
+          "\ngamma_larg.moy : (19) with NO zero-volume exclusion at all (d_0 = d)."
           "\ngamma_lemme    : a tile counts fully iff the correct class fills it, 0 otherwise."
           "\ngamma_19_inf   : RIGOROUS lower bound on (19). Uses only the safe half of the"
           "\n                 lemma (V3^c = V2 => P3^c = P2 => positive volume), never the half"
