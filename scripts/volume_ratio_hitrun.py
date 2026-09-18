@@ -211,6 +211,16 @@ def main():
     ap.add_argument("--model_type", default="cnn", choices=["mlp", "cnn"])
     ap.add_argument("--sample_idx", type=int, default=0)
     ap.add_argument("--bits", type=int, default=16)
+    ap.add_argument("--polytope", default="p2", choices=["p2", "p1"],
+                    help="p2 = Xi_x, the correct polytope (needs one walk per b). "
+                         "p1 = Xi-bar_x, the EXTENDED correct polytope of (9),(10),"
+                         "(12), which does not involve N~ at all: one walk serves "
+                         "every bitwidth, and the fraction of samples that N~^b "
+                         "classifies as c is the ideal volume GACC of that point, "
+                         "comparable across b by construction.")
+    ap.add_argument("--bits_grid", type=int, nargs="+", default=None,
+                    help="with --polytope p1: evaluate these bitwidths on the SAME "
+                         "samples, so the curve across b is paired")
     ap.add_argument("--model_path", default=None)
     ap.add_argument("--data_path", default=None)
     ap.add_argument("--csv", default=None,
@@ -248,13 +258,19 @@ def main():
 
     t0 = time.perf_counter()
     if a.model_type == "cnn":
-        _, _, poly = build_cnn_all_polytopes_per_class(fp, {a.bits: q}, x0.unsqueeze(0), c)
+        A_base, b_base, poly = build_cnn_all_polytopes_per_class(
+            fp, {a.bits: q}, x0.unsqueeze(0), c)
         shape = x0.shape
     else:
-        _, _, poly = build_all_polytopes_per_class(fp, {a.bits: q},
-                                                   x0.flatten().unsqueeze(0), c)
+        A_base, b_base, poly = build_all_polytopes_per_class(
+            fp, {a.bits: q}, x0.flatten().unsqueeze(0), c)
         shape = (x0.numel(),)
     A_t, b_t, _ = poly[a.bits]
+    if a.polytope == "p1":
+        # Xi-bar_x: the original network alone, (9), (10), (12). It does not
+        # depend on b, so ONE walk serves every bitwidth and the comparison
+        # across b is paired — the estimate uses common random numbers.
+        A_t, b_t = A_base, b_base
     A = A_t.detach().cpu().numpy().astype(np.float64)
     b = b_t.detach().cpu().numpy().astype(np.float64)
     print(f"P2 built in {time.perf_counter()-t0:.1f}s — {A.shape[0]} rows, "
@@ -301,8 +317,28 @@ def main():
     print(f"class changes between consecutive kept samples: {100*switch:.1f}% "
           f"(a low value means poor mixing — read the ratios with care)")
 
+    if a.polytope == "p1" and a.bits_grid:
+        print(f"\n{'='*66}\nIDEAL VOLUME GACC OF THIS POINT, on the SAME {m} samples of P1"
+              f"\n{'='*66}")
+        print(f"{'b':>4} {'vol correct / vol(P1)':>23} {'95% CI':>20}")
+        for bb in a.bits_grid:
+            qb = quantize_model(fp, bits=bb).eval()
+            with torch.no_grad():
+                pr = []
+                for i in range(0, m, 256):
+                    t = torch.tensor(S[i:i+256].reshape(-1, *shape), dtype=x0.dtype)
+                    pr.append(qb(t).argmax(1).cpu().numpy())
+            pr = np.concatenate(pr)
+            k = int((pr == c).sum())
+            loi, hii = binom_ci(k, m)
+            print(f"{bb:>4} {k/m:>23.4f} {f'[{loi:.4f}, {hii:.4f}]':>20}")
+        print("   No tiling, no mean width, no lemma, no Chebyshev threshold."
+              "\n   P1 is the same body for every b, so these numbers ARE comparable."
+              "\n   This is what the whole augmentation machinery approximates.")
+
     counts = np.bincount(cls, minlength=10)
-    print(f"\n{'k':>3} {'samples':>9} {'vol(P3^k)/vol(P2)':>19} {'95% CI':>18}")
+    body = "P2" if a.polytope == "p2" else "P1"
+    print(f"\n{'k':>3} {'samples':>9} {f'vol / vol({body})':>19} {'95% CI':>18}")
     print("-" * 54)
     for k in range(10):
         if counts[k] == 0:
@@ -324,9 +360,15 @@ def main():
             W = np.nan_to_num(W)
             mw = W[c] / W.sum() if W.sum() else float("nan")
             print(f"\n{'='*60}\nTHE COMPARISON\n{'='*60}")
-            print(f"  mean-width ratio   d(P3^c) / sum_k d(P3^k) = {mw:.4f}")
-            print(f"  sampled volume ratio  vol(P3^c)/vol(P2)    = {counts[c]/m:.4f}")
+            print(f"  mean-width ratio   d(P3^c) / sum_k d(P3^k) = {mw:.4f}"
+                  f"   (over P2)")
+            print(f"  sampled volume ratio  vol(correct) / vol({body})"
+                  f"{'':>3} = {counts[c]/m:.4f}")
             print("  The first is what (19) uses; the second is what (19) means.")
+            if body == "P1":
+                print("  NOTE: the walk was in P1, so the denominators differ. They"
+                      "\n  coincide only where P2 fills P1, which holds at large b"
+                      "\n  (V2/V1 = 0.9998 at b=16) and NOT at small b.")
 
     if a.out:
         Path(a.out).parent.mkdir(parents=True, exist_ok=True)
