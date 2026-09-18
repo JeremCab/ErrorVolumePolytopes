@@ -57,7 +57,16 @@ def chebyshev_radius(A, b, box=(-1.0, 1.0), eps=0.0,
            pass 1e-6 to reproduce the slightly-inflated polytope the mean-width
            code actually solved over.
     zero_tol : radius at/below which the polytope is declared zero-volume.
-    method   : linprog solver (default 'highs').
+    method   : linprog solver. 'highs' (dual simplex, default, unchanged) |
+           'highs-ipm' (interior point) | 'auto' = try 'highs-ipm' first and fall
+           back to 'highs' only if it does not solve.
+           MEASURED 2026-09-11, CNN sample 0, b=16, 33 857 LP rows:
+           'highs' hits a 1800 s cap without converging; 'highs-ipm' solves it in
+           472 s (rho = 1.7488e-05). The same ordering gave x94 on the mean-width
+           pre-screen. The default is deliberately left at 'highs' because
+           switching would turn campaign entries recorded as 'failed' into real
+           radii, changing which polytopes enter GACC (19) — a scientific
+           decision, not a performance one.
     scale_rows : divide each constraint by ||a_j|| before solving (default True).
            Dividing an inequality by a positive number leaves its solution set
            unchanged, so this is the SAME LP — but the rho column becomes all-ones
@@ -85,6 +94,8 @@ def chebyshev_radius(A, b, box=(-1.0, 1.0), eps=0.0,
                                     about the volume.
       'success'       : bool  (LP solved to optimality)
       'n_constraints' : rows used (after pruning, incl. box rows)
+      'solver'        : str   — solver that actually produced this result
+                        (differs from `method` when method='auto' fell back)
       'lp_status'     : int   — scipy linprog status code
       'lp_message'    : str   — scipy linprog message
     """
@@ -127,8 +138,20 @@ def chebyshev_radius(A, b, box=(-1.0, 1.0), eps=0.0,
     bounds = [(None, None)] * n + [(0.0, None)]    # x free, r >= 0
 
     options = {} if time_limit is None else {"time_limit": float(time_limit)}
-    res = linprog(c, A_ub=A_cheb, b_ub=b_cheb, bounds=bounds, method=method,
-                  options=options)
+    if method == "auto":
+        solver = "highs-ipm"
+        res = linprog(c, A_ub=A_cheb, b_ub=b_cheb, bounds=bounds, method=solver,
+                      options=options)
+        # Retry only on non-convergence. Status 2 is a proof of emptiness and is
+        # final: re-solving it with another method could only muddy that.
+        if not res.success and res.status != 2:
+            solver = "highs"
+            res = linprog(c, A_ub=A_cheb, b_ub=b_cheb, bounds=bounds, method=solver,
+                          options=options)
+    else:
+        solver = method
+        res = linprog(c, A_ub=A_cheb, b_ub=b_cheb, bounds=bounds, method=solver,
+                      options=options)
 
     # Only linprog status 2 (infeasible) proves the polytope is empty: with r >= 0
     # allowed, the LP is feasible iff the polytope is non-empty. Statuses 1
@@ -136,13 +159,20 @@ def chebyshev_radius(A, b, box=(-1.0, 1.0), eps=0.0,
     # failures — reporting them as 'empty' would silently exclude a polytope from
     # the GACC denominator on nothing but a solver hiccup.
     if not res.success:
-        return {"radius": np.nan,
+        return {"radius": np.nan, "centre": None,
                 "status": "empty" if res.status == 2 else "failed",
                 "success": False, "n_constraints": A_all.shape[0],
+                "solver": solver,
                 "lp_status": int(res.status), "lp_message": str(res.message)}
 
     r_star = float(res.x[-1])
+    # res.x is [y_1..y_n, rho]: the first n entries are the Chebyshev CENTRE, the
+    # deepest interior point of the polytope. Returning it costs nothing and gives
+    # a guaranteed-interior start for Hit-and-Run, which cannot be started at x0
+    # when x0 sits on hundreds of faces of the pixel box.
+    centre = res.x[:-1].astype(float).copy()
     status = "zero_volume" if r_star <= zero_tol else "full_dim"
-    return {"radius": r_star, "status": status,
+    return {"radius": r_star, "status": status, "centre": centre,
             "success": True, "n_constraints": A_all.shape[0],
+            "solver": solver,
             "lp_status": int(res.status), "lp_message": str(res.message)}
