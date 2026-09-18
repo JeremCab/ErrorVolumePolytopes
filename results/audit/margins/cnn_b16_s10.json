@@ -1,0 +1,42 @@
+{
+ "sample_idx": 10,
+ "class_c": 0,
+ "bits": 16,
+ "x0": {
+  "P1": {
+   "rows": 16011,
+   "violated": 266,
+   "tight": 325,
+   "max_slack": 1.043081283569336e-07,
+   "max_slack_normalised": 7.060062287842379e-08
+  },
+  "P2": {
+   "rows": 32013,
+   "violated": 297,
+   "tight": 650,
+   "max_slack": 1.043081283569336e-07,
+   "max_slack_normalised": 7.359139649111457e-08
+  }
+ },
+ "rho_P1": 0.001893370703031251,
+ "rho_P1_status": "full_dim",
+ "centre": {
+  "P1": {
+   "rows": 16011,
+   "violated": 0,
+   "tight": 0,
+   "max_slack": -0.0015798508671296396,
+   "max_slack_normalised": -0.0018933546031121423
+  },
+  "P2": {
+   "rows": 32013,
+   "violated": 0,
+   "tight": 0,
+   "max_slack": -0.0015682854161462867,
+   "max_slack_normalised": -0.001819192094268239
+  },
+  "dist_to_x0": 1.7825985773757285,
+  "norm_x0": 20.493423461914062
+ },
+ "sec": 45.187357125018025
+}

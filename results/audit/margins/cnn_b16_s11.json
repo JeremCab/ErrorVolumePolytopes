@@ -1,0 +1,24 @@
+{
+ "sample_idx": 11,
+ "class_c": 9,
+ "bits": 16,
+ "x0": {
+  "P1": {
+   "rows": 16224,
+   "violated": 307,
+   "tight": 353,
+   "max_slack": 6.179276632686988e-07,
+   "max_slack_normalised": 1.0409227525670921e-07
+  },
+  "P2": {
+   "rows": 32439,
+   "violated": 333,
+   "tight": 706,
+   "max_slack": 8.285491967101911e-07,
+   "max_slack_normalised": 2.61289290914561e-07
+  }
+ },
+ "rho_P1": null,
+ "rho_P1_status": "failed",
+ "sec": 103.90126299997792
+}
