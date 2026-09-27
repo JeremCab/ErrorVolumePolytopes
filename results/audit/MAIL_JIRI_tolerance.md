@@ -24,15 +24,18 @@ Xi-bar_x, so the aggregate of their volume ratios IS the volume ratio over
 Xi-bar_x. The sampled value is therefore not a proxy for gamma_{T_P}: it is the
 quantity gamma_{T_P} estimates. Comparing the two says which tolerance is right.
 
-Sampling Xi-bar_x for the 150 original points of the campaign, 800 samples each:
+Sampling Xi-bar_x for the 150 original points of the campaign, 800 samples
+each:
 
                         b=4       b=6      b=10      b=16    mean error
-  measured volume    0.9678    0.9993    0.9999    1.0000
-  (standard error)   0.0133    0.0006    0.0001    0.0000
-  gamma_TP 1e-03     0.9253    1.0000    1.0000    1.0000        0.0108
-  gamma_TP 1e-04     0.8651    1.0000    1.0000    0.9712        0.0331
-  gamma_TP 1e-06     0.8220    0.8677    0.9159    0.9500        0.1029
-  gamma_TP 1e-08     0.7995    0.8136    0.7735    0.7729        0.2019
+  measured volume    0.9491    0.9986    0.9999    1.0000
+  (standard error)   0.0164    0.0009    0.0001    0.0000
+  gamma_TP 1e-03     0.9253    1.0000    1.0000    1.0000        0.0063
+  gamma_TP 1e-04     0.8651    1.0000    1.0000    0.9712        0.0286
+  gamma_TP 1e-05     0.8398    0.9201    0.9947    0.9548        0.0596
+  gamma_TP 1e-06     0.8220    0.8677    0.9159    0.9500        0.0980
+  gamma_TP 1e-08     0.7995    0.8136    0.7735    0.7729        0.1970
+  gamma_TP 1e-10     0.7476    0.6298    0.4591    0.4470        0.4160
 
 The clearest case is b = 16, because neither of the two usual objections applies
 there: T_P has 159 tiles for 150 original points, i.e. essentially the data
@@ -45,18 +48,42 @@ partial coverage of Xi-bar_x nor the mean-width weighting is in play.
 
 At b = 16 the deficit of 0.05 is therefore due to the tolerance alone.
 
-The consequence is not comfortable. At the calibrated tolerance the curve reads
-0.9253 / 1.0000 / 1.0000 / 1.0000, almost flat, so the visible gap between
-gamma_{T_P} and alpha_T in the figure comes from the choice of 1e-06. And on
-these 150 points the measured volume at b = 4 is 0.9678 against alpha_T =
-0.9533: the neighbourhood is in fact slightly BETTER classified than the data
-points, the neighbourhoods of the misclassified points being largely correct.
+The consequence for the figure is not comfortable: at the calibrated tolerance
+the curve reads 0.9253 / 1.0000 / 1.0000 / 1.0000, almost flat, so the visible
+gap between gamma_{T_P} and alpha_T comes from the choice of 1e-06.
 
-Two honest caveats. The coverage of Xi-bar_x by the tiles is partial at b = 4
+
+1b. But our claim does hold inside Xi-bar_x -- it is simply small
+
+Extending the same measurement to b = 2 and 3, on all 150 points:
+
+                   b=2      b=3      b=4      b=6     b=10     b=16
+  volume        0.1000   0.5522   0.9491   0.9986   0.9999   1.0000
+  alpha_T       0.1000   0.5667   0.9533   1.0000   1.0000   1.0000
+  difference   +0.0000  -0.0145  -0.0042  -0.0014  -0.0001  +0.0000
+
+The difference is negative wherever there is anything to measure, and it is
+monotone in b: -0.0145, -0.0042, -0.0014, -0.0001, 0.0000 from b = 3 to b = 16.
+That is exactly our claim -- generalized accuracy is stricter than pointwise
+accuracy, and the more so the coarser the quantization -- verified INSIDE
+Xi-bar_x, which I had thought impossible after my previous email. The effect is
+real; it is just an order of magnitude smaller than Fig. 2 suggests, at most
+1.45 points rather than 15.
+
+The curve also locates the cliff: 0.9491 at b = 4, 0.5522 at b = 3, 0.1000 at
+b = 2. That is where quantization actually destroys the network.
+
+One correction to my previous email, since I had it the wrong way round. I wrote
+that the neighbourhood came out BETTER classified than the data points (0.9678
+against 0.9533). That compared 135 sampled points with alpha_T over 150, and the
+15 missing ones happened to be the hardest cases -- they had been computed
+earlier and were skipped by the job array. On the same 150 points the difference
+is -0.0042, i.e. in the direction we claim.
+
+One caveat remains: the coverage of Xi-bar_x by the tiles is partial at b = 4
 (five representatives kept out of the five hundred found, and chosen by maximal
-distance, hence atypical), so part of the b = 4 discrepancy may be coverage
-rather than tolerance. And the measurement rests on 135 of the 150 points, the
-others coming from LPs that did not converge. Neither affects b = 16.
+distance, hence atypical), so part of the b = 4 discrepancy between gamma_TP and
+the volume may be coverage rather than tolerance. It does not affect b = 16.
 
 I realise this is awkward with the submission going out, but I think the
 methodological gain is real: the free parameter you objected to in gamma' now
