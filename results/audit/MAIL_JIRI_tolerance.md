@@ -79,13 +79,49 @@ on -- but we should probably say so explicitly rather than leave it implicit.
 
 3. b = 2 and 3, as you asked
 
-On the 150 original points, the pointwise accuracy of the quantised CNN is
+I added both to the radius experiment, on 74 data points per network (500
+samples per radius, boxes of half-width r, keeping only what N still classifies
+correctly). The r -> 0 row is alpha_T by construction.
 
-    b = 2 : 0.1000        b = 3 : 0.5667        b = 4 : 0.9533
+CNN
+    r    |    b=2      b=3      b=4      b=6      b=8     b=10     b=12     b=16
+ alpha_T | 0.1081   0.6757   0.9189   1.0000   1.0000   1.0000   1.0000   1.0000
+   0.01  | 0.1081   0.6740   0.9174   1.0000   1.0000   1.0000   1.0000   1.0000
+   0.03  | 0.1081   0.6628   0.9163   1.0000   0.9954   1.0000   1.0000   1.0000
+   0.10  | 0.1081   0.6383   0.9222   0.9949   0.9922   1.0000   1.0000   1.0000
+   0.30  | 0.1096   0.5396   0.9231   0.9852   0.9969   0.9997   0.9997   1.0000
+   0.50  | 0.1081   0.4594   0.8892   0.9725   0.9952   0.9991   0.9997   1.0000
+   1.00  | 0.1081   0.3207   0.6401   0.9380   0.9893   0.9952   0.9992   0.9999
 
-so b = 2 is beyond the usable range -- the network collapses to chance -- while
-b = 3 is the interesting case, with a marked but partial degradation. Adding
-b = 3 to the experiments is cheap and I am happy to do it.
+MLP
+    r    |    b=2      b=3      b=4      b=6      b=8     b=10     b=12     b=16
+ alpha_T | 0.1216   0.7162   1.0000   1.0000   1.0000   1.0000   1.0000   1.0000
+   0.01  | 0.1216   0.7162   1.0000   1.0000   1.0000   1.0000   1.0000   1.0000
+   0.03  | 0.1216   0.7163   1.0000   0.9999   1.0000   1.0000   1.0000   1.0000
+   0.10  | 0.1216   0.7151   0.9988   0.9979   0.9999   1.0000   1.0000   1.0000
+   0.30  | 0.1216   0.7080   0.9923   0.9981   1.0000   0.9999   1.0000   1.0000
+   0.50  | 0.1216   0.7051   0.9905   0.9974   0.9998   0.9999   1.0000   1.0000
+   1.00  | 0.1216   0.6932   0.9815   0.9945   0.9993   0.9996   0.9999   1.0000
+
+Gap to alpha_T at r = 1:
+
+            b=2       b=3       b=4       b=6       b=8      b=10      b=12      b=16
+  CNN    0.0000   -0.3550   -0.2788   -0.0620   -0.0107   -0.0048   -0.0008   -0.0001
+  MLP    0.0000   -0.0230   -0.0185   -0.0055   -0.0007   -0.0004   -0.0001    0.0000
+
+So b = 3 is the most revealing regime we have: for the CNN the gap reaches
+-0.355, larger than at b = 4, and the ordering in b continues cleanly downwards.
+
+b = 2, on the other hand, falls outside the usable range, and in an instructive
+way. The value does not move at all with r -- 0.1081 at every radius. The
+decomposition shows why: of the 74 points, N~^2 classifies 8 correctly, and for
+those 8 the neighbourhood is correct at 100% at EVERY radius, while for the
+other 66 it is wrong at 100% everywhere. The network no longer depends on its
+input at all: it has collapsed the classes. It is not a degraded network but a
+destroyed one, so generalized accuracy has nothing to measure there.
+
+(These 74 points are not the 150 original points of the campaign, hence the
+small differences in alpha_T with section 1.)
 
 
 4. The curse of dimensionality -- Vera was right, and it depends where
