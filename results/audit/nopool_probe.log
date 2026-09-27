@@ -1,0 +1,24 @@
+classe FP (poids aleatoires) : 3
+
+couches vues par le traceur :
+   [0] Conv2d
+   [1] ReLU
+   [2] Conv2d
+   [3] ReLU
+   [4] Flatten
+   [5] Linear
+   [6] ReLU
+   [7] Linear
+
+blocs de contraintes :
+   U     925 lignes | norme nulle     0 | serrees(<1e-6)     0 | |Wx+b| median 3.87e-01
+   U     514 lignes | norme nulle     0 | serrees(<1e-6)     0 | |Wx+b| median 1.39e-01
+   U      54 lignes | norme nulle     0 | serrees(<1e-6)     0 | |Wx+b| median 6.31e-02
+   S    1035 lignes | norme nulle     0 | serrees(<1e-6)     0 | |Wx+b| median 2.78e-01
+   S     466 lignes | norme nulle     0 | serrees(<1e-6)     0 | |Wx+b| median 1.57e-01
+   S      42 lignes | norme nulle     0 | serrees(<1e-6)     0 | |Wx+b| median 6.59e-02
+
+P2 construit en 0.1s : 6081 lignes
+   effectives 6081 | serrees(<1e-6) 0 | violees 0 | marge de x0 -3.661e-05
+
+   rho(P2) [highs]     = 1.017741e-01  [full_dim, 10s]

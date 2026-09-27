@@ -1,0 +1,20 @@
+{
+  "arch": "mlp",
+  "sample": 0,
+  "tol": 1e-06,
+  "rows": [
+    {
+      "bits": 16,
+      "n_rows": 3849,
+      "n_effective": 3849,
+      "n_tight": 0,
+      "rho_plein": 0.3236330645604018,
+      "status_plein": "full_dim",
+      "secs_plein": 91.7,
+      "rho_elague": 0.3236330645604018,
+      "status_elague": "full_dim",
+      "secs_elague": 94.4,
+      "ratio": 1.0
+    }
+  ]
+}

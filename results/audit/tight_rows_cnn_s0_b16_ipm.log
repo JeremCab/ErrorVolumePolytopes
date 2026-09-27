@@ -1,0 +1,16 @@
+CNN | echantillon 0 | classe 9 | tol = 1e-06
+
+--- b = 16 ---
+  41361 lignes | norme nulle (deja elaguees) : 9072 | effectives : 32289
+    serrees a |Ax+b| < 1e-09 : 79
+    serrees a |Ax+b| < 1e-08 : 152
+    serrees a |Ax+b| < 1e-07 : 731
+    serrees a |Ax+b| < 1e-06 : 812
+    serrees a |Ax+b| < 1e-05 : 812
+  violees (Ax+b > 0) : 386 | pire : +4.964e-07
+  -> on retire 812 lignes serrees
+  rho_plein   = 1.748811e-05  [full_dim, 472 s, 33857 lignes LP]
+  rho_elague  = 1.748321e-05  [full_dim, 1578 s, 33045 lignes LP]
+  RATIO rho_elague / rho_plein = 0.9997
+
+ecrit -> results/audit/tight_rows_cnn_s0_b16_ipm.json

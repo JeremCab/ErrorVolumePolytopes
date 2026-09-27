@@ -1,0 +1,16 @@
+MLP | echantillon 0 | classe 9 | tol = 1e-06
+
+--- b = 16 ---
+  3849 lignes | norme nulle (deja elaguees) : 0 | effectives : 3849
+    serrees a |Ax+b| < 1e-09 : 0
+    serrees a |Ax+b| < 1e-08 : 0
+    serrees a |Ax+b| < 1e-07 : 0
+    serrees a |Ax+b| < 1e-06 : 0
+    serrees a |Ax+b| < 1e-05 : 0
+  violees (Ax+b > 0) : 0 | pire : -3.674e-03
+  -> on retire 0 lignes serrees
+  rho_plein   = 3.236331e-01  [full_dim, 92 s, 5417 lignes LP]
+  rho_elague  = 3.236331e-01  [full_dim, 94 s, 5417 lignes LP]
+  RATIO rho_elague / rho_plein = 1
+
+ecrit -> results/audit/tight_rows_mlp_s0_b16.json

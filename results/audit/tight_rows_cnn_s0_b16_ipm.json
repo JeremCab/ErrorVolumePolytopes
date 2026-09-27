@@ -1,0 +1,20 @@
+{
+  "arch": "cnn",
+  "sample": 0,
+  "tol": 1e-06,
+  "rows": [
+    {
+      "bits": 16,
+      "n_rows": 41361,
+      "n_effective": 32289,
+      "n_tight": 812,
+      "rho_plein": 1.7488114020593015e-05,
+      "status_plein": "full_dim",
+      "secs_plein": 472.1,
+      "rho_elague": 1.7483205931072713e-05,
+      "status_elague": "full_dim",
+      "secs_elague": 1578.2,
+      "ratio": 0.9997193471225929
+    }
+  ]
+}

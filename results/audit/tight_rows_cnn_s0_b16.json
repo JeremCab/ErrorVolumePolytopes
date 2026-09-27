@@ -1,0 +1,19 @@
+{
+  "arch": "cnn",
+  "sample": 0,
+  "tol": 1e-06,
+  "rows": [
+    {
+      "bits": 16,
+      "n_rows": 41361,
+      "n_effective": 32289,
+      "n_tight": 812,
+      "rho_plein": null,
+      "status_plein": "failed",
+      "secs_plein": 1801.8,
+      "rho_elague": null,
+      "status_elague": "failed",
+      "secs_elague": 1801.5
+    }
+  ]
+}
