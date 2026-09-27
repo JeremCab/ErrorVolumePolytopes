@@ -77,24 +77,30 @@ def gamma_TP(recs, tol):
 
 
 def load_sampled(vol_dir, logs, bits, max_idx):
-    """{b: {orig_idx: sampled fraction}} from the P1 walks over the originals."""
+    """{b: {orig_idx: sampled fraction}} from the P1 walks over the originals.
+
+    `logs` are GLOB PATTERNS, not file names: a SLURM array writes one stdout
+    file per task, so the per-bitwidth grid is scattered over 150 files. The
+    grid lives only in stdout because volume_ratio_hitrun.py saves the counts of
+    the --bits model alone to its JSON.
+    """
     out = {b: {} for b in bits}
-    for lg in logs:
-        p = Path(lg)
-        if not p.exists():
-            continue
-        for bk in p.read_text().split("P2 built in")[1:]:
-            m = re.search(r"sample (\d+), class c = (\d+)", bk)
-            tab = re.findall(r"^\s+(\d+)\s+([\d.]+)\s+\[", bk, re.M)
-            if not m or not tab:
-                continue
-            i = int(m.group(1))
-            if i >= max_idx:
-                continue
-            for b, v in tab:
-                if int(b) in out:
-                    out[int(b)][i] = float(v)
-    return out
+    seen = 0
+    for pattern in logs:
+        for p in sorted(Path().glob(pattern)) or ([Path(pattern)] if Path(pattern).exists() else []):
+            seen += 1
+            for bk in p.read_text(errors="replace").split("P2 built in")[1:]:
+                m = re.search(r"sample (\d+), class c = (\d+)", bk)
+                tab = re.findall(r"^\s+(\d+)\s+([\d.]+)\s+\[", bk, re.M)
+                if not m or not tab:
+                    continue
+                i = int(m.group(1))
+                if i >= max_idx:
+                    continue
+                for b, v in tab:
+                    if int(b) in out:
+                        out[int(b)][i] = float(v)
+    return out, seen
 
 
 def main():
@@ -103,22 +109,30 @@ def main():
     ap.add_argument("--stage1_dir", default="results/volumes_v3k_cnn_gen150")
     ap.add_argument("--vol_dir", default="results/volume_ratio")
     ap.add_argument("--logs", nargs="+",
-                    default=["logs/vr_gen150_originals.log", "logs/vr_cnn_s7_P1.log",
-                             "logs/vr_cnn_batch_P1.log", "logs/vr_cnn_random_P1.log",
-                             "logs/vr_cnn_random2_P1.log"])
+                    default=["logs/p1_gen150_*.out", "logs/vr_gen150_originals.log",
+                             "logs/vr_cnn_s7_P1.log", "logs/vr_cnn_batch_P1.log",
+                             "logs/vr_cnn_random_P1.log", "logs/vr_cnn_random2_P1.log"],
+                    help="glob patterns; the per-bitwidth grid lives in stdout")
     ap.add_argument("--bits", type=int, nargs="+", default=[4, 6, 10, 16])
     ap.add_argument("--n_orig", type=int, default=150)
     a = ap.parse_args()
 
     s1 = load_stage1(a.stage1_dir, a.bits)
-    sm = load_sampled(a.vol_dir, a.logs, a.bits, a.n_orig)
+    sm, n_logs = load_sampled(a.vol_dir, a.logs, a.bits, a.n_orig)
 
     print(f"\n{'='*78}\nCALIBRATION DE LA TOLERANCE — campagne gen150, CNN\n{'='*78}")
     n_s = len(sm[a.bits[0]])
     print(f"points originaux echantillonnes dans P1 : {n_s}/{a.n_orig}")
     print("tuiles par b :", {b: len(s1[b]) for b in a.bits})
-    if n_s < a.n_orig:
-        print(f"⚠  incomplet — relancer scripts/run_p1_gen150.sh avant de conclure")
+    print(f"fichiers de log lus : {n_logs}")
+    if n_s == 0:
+        print("\n⚠  AUCUNE valeur echantillonnee trouvee. La grille par b n'existe que"
+              "\n   dans la SORTIE STANDARD des taches, pas dans les JSON. Verifier ou"
+              "\n   elle a ete ecrite, puis relancer avec par exemple :"
+              "\n       --logs 'logs/p1_gen150_*.out'"
+              f"\n   (motifs essayes : {' '.join(a.logs)})")
+    elif n_s < a.n_orig:
+        print(f"⚠  incomplet — {a.n_orig - n_s} points manquants, relancer l'array")
 
     print(f"\n{'':>22}" + "".join(f"{'b='+str(b):>10}" for b in a.bits))
     print("-" * (22 + 10 * len(a.bits)))
@@ -131,7 +145,8 @@ def main():
     best, best_err = None, np.inf
     for tol in TOLS:
         g = {b: gamma_TP(s1[b], tol) for b in a.bits}
-        err = np.nanmean([abs(g[b] - ideal[b]) for b in a.bits])
+        d = [abs(g[b] - ideal[b]) for b in a.bits if np.isfinite(ideal[b])]
+        err = float(np.mean(d)) if d else float('nan')
         if err < best_err:
             best, best_err = tol, err
         print(f"{'gamma_TP tol=' + f'{tol:.0e}':>22}"
@@ -140,8 +155,12 @@ def main():
     g0 = {b: gamma_TP(s1[b], None) for b in a.bits}
     print(f"{'gamma_TP sans (18)':>22}" + "".join(f"{g0[b]:>10.4f}" for b in a.bits))
     print("-" * (22 + 10 * len(a.bits)))
-    print(f"\n==> tolerance la plus proche du volume mesure : {best:.0e} "
-          f"(ecart moyen {best_err:.4f})")
+    if best is None or not np.isfinite(best_err):
+        print("\n==> pas de tolerance designee : le volume mesure est absent (voir"
+              "\n    l'avertissement ci-dessus).")
+    else:
+        print(f"\n==> tolerance la plus proche du volume mesure : {best:.0e} "
+              f"(ecart moyen {best_err:.4f})")
     print("\n   A lire avec les deux reserves du docstring : la couverture de P1 par"
           "\n   les tuiles est partielle a b=4, et gamma_TP est pondere par des largeurs"
           "\n   moyennes alors que le volume mesure est une moyenne non ponderee.")

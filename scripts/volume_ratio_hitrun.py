@@ -317,6 +317,7 @@ def main():
     print(f"class changes between consecutive kept samples: {100*switch:.1f}% "
           f"(a low value means poor mixing — read the ratios with care)")
 
+    grid = {}
     if a.polytope == "p1" and a.bits_grid:
         print(f"\n{'='*66}\nIDEAL VOLUME GACC OF THIS POINT, on the SAME {m} samples of P1"
               f"\n{'='*66}")
@@ -331,6 +332,7 @@ def main():
             pr = np.concatenate(pr)
             k = int((pr == c).sum())
             loi, hii = binom_ci(k, m)
+            grid[str(bb)] = k / m if m else None
             print(f"{bb:>4} {k/m:>23.4f} {f'[{loi:.4f}, {hii:.4f}]':>20}")
         print("   No tiling, no mean width, no lemma, no Chebyshev threshold."
               "\n   P1 is the same body for every b, so these numbers ARE comparable."
@@ -377,6 +379,10 @@ def main():
              "class_c": c, "rho_P2": ch["radius"], "class_at_centre": k_centre,
              "n_samples": m, "counts": counts.tolist(),
              "ratio_c": counts[c] / m if m else None,
+             # the per-bitwidth grid, so downstream analysis reads the JSON and
+             # not the stdout — a SLURM array scatters stdout over one file per
+             # task, which is how calibrate_tolerance.py first came up empty
+             "gacc_by_bits": grid,
              "switch_rate": switch, **diag}, indent=2))
         print(f"\nsaved -> {a.out}")
 
