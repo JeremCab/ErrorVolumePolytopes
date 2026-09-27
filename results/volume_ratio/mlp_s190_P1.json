@@ -1,0 +1,27 @@
+{
+  "model_type": "mlp",
+  "sample_idx": 190,
+  "bits": 16,
+  "class_c": 9,
+  "rho_P2": 0.2632595772966323,
+  "class_at_centre": 9,
+  "n_samples": 800,
+  "counts": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    800
+  ],
+  "ratio_c": 1.0,
+  "switch_rate": 0.0,
+  "degenerate_steps": 0,
+  "chord_len_p50": NaN,
+  "chord_len_p10": NaN,
+  "max_constraint_violation": -1.0441784827425193e-05
+}
