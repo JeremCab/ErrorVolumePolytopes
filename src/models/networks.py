@@ -175,3 +175,41 @@ class FashionCNN_Small(nn.Module):
 #         x = x.view(x.size(0), -1)
 #         x = F.relu(self.fc1(x))
 #         return self.fc2(x)
+
+
+class FashionCNN_NoPool(nn.Module):
+    """FashionCNN_Small with the max-pools replaced by stride-2 convolutions.
+
+    Same tensor shapes and the same two conv / two FC structure, but no pooling.
+    Two reasons, both measured on `FashionCNN_Small` (see
+    results/audit/FINDINGS_FOR_JIRI.md):
+
+    1. Max-pool creates EXACT ties between equal post-ReLU values, so x0 lands on
+       several hundred genuine faces of its own linearity region. The cell that
+       PyTorch's argmax tie-break then selects is arbitrary, which makes Xi_x --
+       and hence gamma -- convention-dependent. Striding removes ties entirely:
+       the region is cut by ReLU hyperplanes only.
+    2. Constraint count. The pooled net has 11 856 ReLU neurons (7 840 + 3 920 +
+       96); this one has 3 036 (1 960 + 980 + 96), against the MLP's 1 920. The
+       Chebyshev LP on the pooled net does not converge in 1800 s with the dual
+       simplex, where the MLP solves in 92 s.
+
+    Downsampling is done by the feature convolutions themselves rather than by
+    extra layers, so no ReLU is added (all-convolutional net, Springenberg et al.
+    2015). `_collect_conv2d` propagates shortcut weights through
+    `conv._conv_forward`, which honours stride, so the polytope builder needs no
+    change.
+    """
+    def __init__(self):
+        super().__init__()
+        self.conv1 = nn.Conv2d(1, 10, 3, stride=2, padding=1)    # 28x28 -> 14x14
+        self.conv2 = nn.Conv2d(10, 20, 3, stride=2, padding=1)   # 14x14 ->  7x7
+        self.fc1 = nn.Linear(20 * 7 * 7, 96)
+        self.fc2 = nn.Linear(96, 10)
+
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = x.view(x.size(0), -1)
+        x = F.relu(self.fc1(x))
+        return self.fc2(x)
