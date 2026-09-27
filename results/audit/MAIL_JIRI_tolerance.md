@@ -1,30 +1,30 @@
-Court message a Jiri — la tolerance de (18) est desormais calibrable. 27 sep 2026.
-Notation du papier. Volontairement bref : il soumet en ce moment.
+Message a Jiri — la calibration de la tolerance + les questions en attente.
+27 sep 2026. Notation du papier. Les questions de fond (role des polytopes,
+nouveau voisinage) sont renvoyees a la visite, comme il le suggere lui-meme.
 
 ---
 
 Hi Jiri,
 
-One more result, and I think you should have it before the final version, since
-it concerns the four points of Fig. 2 (right).
+Several things at once, the first of which concerns Fig. 2 (right) and should
+probably reach you before the final version.
 
-Those four values come from the row tol = 1e-06 of the tolerance scan I sent
-you, where "tol" is the relative gap at which we declare d(Xi~_x^k) = d(Xi_x)
-and apply (18) through the lemma. The scan gives an increasing curve at 1e-06, a
-flat one at 1e-08 and a decreasing one at 1e-10, so that choice decides the
-shape. Until now we had no way to justify one value over another -- which is the
-objection you yourself raised against gamma'.
 
-We can now fix it by measurement rather than by convention.
+1. The tolerance in (18) can now be calibrated instead of chosen
 
-The tiles Xi_y of T_x partition Xi-bar_x, so the aggregate of their volume
-ratios IS the volume ratio over Xi-bar_x. That is exactly what the Monte Carlo
-of my previous email measures, with no mean width and no threshold. So the
-sampled value is not a proxy for gamma_{T_P}: it is the quantity gamma_{T_P}
-estimates. Comparing the two says which tolerance is right.
+The four points of Fig. 2 (right) come from the row tol = 1e-06 of the tolerance
+scan I sent you, "tol" being the relative gap at which we declare
+d(Xi~_x^k) = d(Xi_x) and apply (18) through the lemma. That scan gives an
+increasing curve at 1e-06, a flat one at 1e-08 and a decreasing one at 1e-10, so
+the choice decides the shape -- and until now nothing justified one value over
+another, which is precisely the objection you raised against gamma'.
 
-I sampled P1 for 135 of the 150 original points of the campaign, 800 samples
-each:
+The Monte Carlo of my previous email settles it. The tiles Xi_y of T_x partition
+Xi-bar_x, so the aggregate of their volume ratios IS the volume ratio over
+Xi-bar_x. The sampled value is therefore not a proxy for gamma_{T_P}: it is the
+quantity gamma_{T_P} estimates. Comparing the two says which tolerance is right.
+
+Sampling Xi-bar_x for the 150 original points of the campaign, 800 samples each:
 
                         b=4       b=6      b=10      b=16    mean error
   measured volume    0.9678    0.9993    0.9999    1.0000
@@ -39,32 +39,100 @@ there: T_P has 159 tiles for 150 original points, i.e. essentially the data
 points themselves, and Xi_x fills Xi-bar_x (V2/V1 = 0.998), so neither the
 partial coverage of Xi-bar_x nor the mean-width weighting is in play.
 
-  measured volume   1.0000   (standard error 0.0000)
-  gamma_TP at 1e-03 1.0000
-  gamma_TP at 1e-06 0.9500   <- the point plotted in Fig. 2 (right)
+  measured volume    1.0000   (standard error 0.0000)
+  gamma_TP at 1e-03  1.0000
+  gamma_TP at 1e-06  0.9500   <- the point plotted in Fig. 2 (right)
 
-At b = 16 the deficit of 0.05 is therefore entirely due to the tolerance.
+At b = 16 the deficit of 0.05 is therefore due to the tolerance alone.
 
-The consequence is not comfortable: at the calibrated tolerance the curve reads
-0.9253 / 1.0000 / 1.0000 / 1.0000, i.e. almost flat, so the visible gap between
+The consequence is not comfortable. At the calibrated tolerance the curve reads
+0.9253 / 1.0000 / 1.0000 / 1.0000, almost flat, so the visible gap between
 gamma_{T_P} and alpha_T in the figure comes from the choice of 1e-06. And on
 these 150 points the measured volume at b = 4 is 0.9678 against alpha_T =
-0.9533, so the neighbourhood is in fact slightly BETTER classified than the data
-points -- the neighbourhoods of the misclassified points being largely correct.
+0.9533: the neighbourhood is in fact slightly BETTER classified than the data
+points, the neighbourhoods of the misclassified points being largely correct.
 
 Two honest caveats. The coverage of Xi-bar_x by the tiles is partial at b = 4
 (five representatives kept out of the five hundred found, and chosen by maximal
 distance, hence atypical), so part of the b = 4 discrepancy may be coverage
-rather than tolerance. And 15 of the 150 points are still missing, from LPs that
-did not converge. Neither affects b = 16.
+rather than tolerance. And the measurement rests on 135 of the 150 points, the
+others coming from LPs that did not converge. Neither affects b = 16.
 
-I realise this is awkward with the submission going out. But I think the
+I realise this is awkward with the submission going out, but I think the
 methodological gain is real: the free parameter you objected to in gamma' now
-has an answer, and it comes from a measurement rather than from an argument. We
-can say in the paper that the tolerance is calibrated against a direct volume
-estimate, which is a much stronger position than choosing it.
+has an answer, and it comes from a measurement rather than from an argument.
 
-Happy to go through this in Versailles.
+
+2. Your question about the 1,000 data points
+
+They were drawn from the 60,000 TRAINING points, not from the 10,000 validation
+ones and not from a mixture of the two. The 56,334 figure is the intersection of
+the two correctly classified subsets: 59,297 for N_2 (98.83% of 60,000) and
+56,680 for N_1 (94.47%), which match the reported accuracies exactly.
+
+Since the reviewer asked, it may be worth anticipating the follow-up: T comes
+from data the networks have seen, while the paper is about generalization. The
+answer is, I think, that generalized accuracy measures the behaviour of the
+APPROXIMATED network on neighbourhoods the original network was never trained
+on -- but we should probably say so explicitly rather than leave it implicit.
+
+
+3. b = 2 and 3, as you asked
+
+On the 150 original points, the pointwise accuracy of the quantised CNN is
+
+    b = 2 : 0.1000        b = 3 : 0.5667        b = 4 : 0.9533
+
+so b = 2 is beyond the usable range -- the network collapses to chance -- while
+b = 3 is the interesting case, with a marked but partial degradation. Adding
+b = 3 to the experiments is cheap and I am happy to do it.
+
+
+4. The curse of dimensionality -- Vera was right, and it depends where
+
+Two different samplings are involved and they do not behave the same way.
+
+Sampling uniformly in a BOX is i.i.d., so the 1/sqrt(M) binomial error is exact
+and genuinely independent of the dimension. That is the case of the experiments
+in section 4 of my previous email.
+
+Sampling inside Xi-bar_x is NOT: Hit-and-Run is a Markov chain, consecutive
+samples are correlated, and the dimension enters through the mixing time. So
+1/sqrt(M) is optimistic there, exactly as Vera said. I tested it by rerunning
+with four times the thinning and a different seed: individual per-point values
+moved by up to 0.133 against a nominal binomial error of 0.035, so the effective
+sample size is well below M. The AGGREGATE moved by less than 0.001, because the
+errors cancel across points. So the averages I quote are sound and the per-point
+values in the mid-range are not, and I no longer quote them.
+
+
+5. The comparison in 4(ii) that was unclear
+
+My fault -- the wording hid the point. Xi-bar_x is not placed among the boxes by
+INCLUSION: it is a long thin sliver, not a box, and it reaches far in directions
+no small box visits. It is placed by what it REVEALS, i.e. by the size of the
+gap to alpha_T that it produces. On that scale Xi-bar_x behaves like a box of
+half-width about 0.25 for the MLP and about 0.02 for the CNN.
+
+
+6. The role of the polytopes
+
+This is the right question, and I agree with your reading: once we sample and
+evaluate the network, the shortcut weights are no longer needed, and the
+Chebyshev centre only matters because Xi-bar_x is defined by a linearity we may
+no longer require. What the polytope still buys us is the DEFINITION of the
+neighbourhood -- without it we fall back on an arbitrary epsilon-ball, i.e. the
+certified-robustness literature we distinguish ourselves from -- and the
+size weights of (19), which sampling cannot provide since absolute volumes are
+#P-hard.
+
+As you say, this is better discussed in person. I would rather bring it to
+Versailles than settle it by email.
+
+
+7. The visit
+
+<Nov 5-15 / Nov 26-Dec 6 — a completer>
 
 All the best,
 Jérémie
