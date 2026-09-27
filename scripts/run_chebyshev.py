@@ -44,15 +44,15 @@ log = logging.getLogger(__name__)
 _W = {}   # per-worker polytope store
 
 
-def _init(polys, tl):
+def _init(polys, tl, method):
     global _W
-    _W = {"polys": polys, "tl": tl}
+    _W = {"polys": polys, "tl": tl, "method": method}
 
 
 def _solve(name):
     A, b = _W["polys"][name]
     t = time.perf_counter()
-    r = chebyshev_radius(A, b, time_limit=_W["tl"])
+    r = chebyshev_radius(A, b, time_limit=_W["tl"], method=_W["method"])
     return name, r, time.perf_counter() - t
 
 
@@ -77,6 +77,14 @@ def main():
                          "surrogate. That is a different question from whether a given "
                          "P3(k) is zero-volume, which still needs its own radius.")
     ap.add_argument("--time_limit", type=float, default=3600.0)
+    ap.add_argument("--lp_method", default="highs",
+                    choices=["highs", "highs-ipm", "auto"],
+                    help="LP solver. Default 'highs' reproduces the campaign. "
+                         "'auto' tries interior point first and falls back to "
+                         "simplex: measured 472 s vs a 1800 s non-convergence on "
+                         "CNN sample 0 at b=16. Changing it can turn 'failed' "
+                         "entries into real radii, so it alters which polytopes "
+                         "enter GACC (19) — use deliberately.")
     ap.add_argument("--n_workers",  type=int,
                     default=int(os.environ.get("SLURM_CPUS_PER_TASK", 4)))
     a = ap.parse_args()
@@ -126,7 +134,7 @@ def main():
     records = []
     with ProcessPoolExecutor(max_workers=min(a.n_workers, len(polys)),
                              initializer=_init,
-                             initargs=(polys, a.time_limit)) as ex:
+                             initargs=(polys, a.time_limit, a.lp_method)) as ex:
         for name, r, sec in ex.map(_solve, list(polys)):
             k = -1 if name == "P2" else int(name.split("k")[1])
             log.info(f"  {name:<9}: {sec:8.1f}s  r={r['radius']:.4e}  {r['status']}")
